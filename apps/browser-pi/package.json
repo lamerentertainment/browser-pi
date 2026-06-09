@@ -1,0 +1,23 @@
+{
+	"name": "browser-pi-app",
+	"private": true,
+	"version": "0.0.1",
+	"type": "module",
+	"description": "Browser PWA mit integriertem pi-Agenten, sandboxiertem VFS und lokalem LLM (Ollama/OpenWebUI).",
+	"scripts": {
+		"dev": "vite",
+		"build": "vue-tsc --noEmit && vite build",
+		"preview": "vite preview",
+		"typecheck": "vue-tsc --noEmit"
+	},
+	"dependencies": {
+		"vue": "3.5.13"
+	},
+	"devDependencies": {
+		"@vitejs/plugin-vue": "5.2.1",
+		"typescript": "5.9.3",
+		"vite": "6.0.7",
+		"vite-plugin-pwa": "0.21.1",
+		"vue-tsc": "2.2.0"
+	}
+}
