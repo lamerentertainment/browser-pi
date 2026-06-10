@@ -223,6 +223,10 @@ export function createBrowserStreamFn(getApiKey: () => string) {
 						})),
 						tool_choice: "auto",
 						stream: true,
+						// OpenWebUIs OpenAI-Kompat-Endpoint braucht chat_id, sonst 400
+						// ('NoneType'.startswith). Leerstring genügt. Bewährt in
+						// iusable_anonymization gegen denselben OpenWebUI-Server.
+						chat_id: "",
 					}),
 					signal,
 				});

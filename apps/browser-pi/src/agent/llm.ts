@@ -61,6 +61,10 @@ export async function chatCompletion(
 		})),
 		tool_choice: "auto",
 		stream: false,
+		// OpenWebUIs OpenAI-Kompat-Endpoint braucht chat_id, sonst 400
+		// ('NoneType'.startswith). Leerstring genügt. Bewährt in
+		// iusable_anonymization gegen denselben OpenWebUI-Server.
+		chat_id: "",
 	};
 
 	const res = await fetch(url, {
