@@ -1,6 +1,16 @@
+/// <reference types="node" />
+import { fileURLToPath, URL } from "node:url";
 import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
+
+// pi-Pakete werden direkt aus dem Monorepo-Source eingebunden (kein dist-Build
+// nötig). Der Agenten-Kern (pi-agent-core) ist browser-sicher; die LLM-Schicht
+// (pi-ai) wird hier nur für Typen/Stream-Utilities genutzt — der eigentliche
+// Provider-Call läuft über eine eigene, browser-sichere streamFn (siehe
+// src/agent/piStream.ts). Damit gelangt kein Node-only-Provider in den Bundle.
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+const shim = (p: string) => fileURLToPath(new URL(`./src/shims/${p}`, import.meta.url));
 
 // Eigenständige PWA für browser-pi. Bewusst NICHT in die Monorepo-Workspaces
 // eingehängt, damit der bestehende `npm run check`/build-Pipeline unberührt bleibt.
@@ -34,7 +44,15 @@ export default defineConfig({
 			},
 		}),
 	],
+	resolve: {
+		alias: {
+			"@earendil-works/pi-agent-core": shim("pi-agent-core.ts"),
+			"@earendil-works/pi-ai": shim("pi-ai.ts"),
+		},
+	},
 	server: {
 		port: 5173,
+		// Zugriff auf die Monorepo-Quellen ausserhalb des App-Roots erlauben.
+		fs: { allow: [repoRoot] },
 	},
 });

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, shallowRef } from "vue";
 import type { AgentEvent } from "./agent/events.ts";
-import { AgentSession } from "./agent/agentLoop.ts";
+import { PiAgentSession } from "./agent/piSession.ts";
 import { settings } from "./store/settings.ts";
 import { requestPersistence } from "./vfs/idb.ts";
 import { seedIfNeeded } from "./vfs/seed.ts";
@@ -17,12 +17,12 @@ const showSettings = ref(false);
 const explorer = ref<InstanceType<typeof FileExplorer> | null>(null);
 const viewer = ref<{ path: string; content: string } | null>(null);
 
-const session = shallowRef<AgentSession | null>(null);
+const session = shallowRef<PiAgentSession | null>(null);
 
 onMounted(async () => {
 	await seedIfNeeded();
 	await requestPersistence();
-	session.value = new AgentSession(settings, (ev) => {
+	session.value = new PiAgentSession(settings, (ev) => {
 		// Status-Events ersetzen die jeweils letzte Statuszeile (kein Spam).
 		if (ev.type === "status") return;
 		events.value = [...events.value, ev];
