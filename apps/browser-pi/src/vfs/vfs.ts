@@ -103,6 +103,43 @@ class Vfs {
 		return toDelete.length;
 	}
 
+	/**
+	 * Verschiebt/benennt eine Datei oder einen ganzen Teilbaum (Fall-Ordner) um.
+	 * Trägt das UI-„Umbenennen"; arbeitet auf einem Snapshot, damit ein Ziel
+	 * innerhalb der Quelle keine Endlosschleife auslöst.
+	 */
+	async move(from: string, to: string, cwd = "/"): Promise<void> {
+		const src = normalizePath(from, cwd);
+		const dst = normalizePath(to, cwd);
+		if (src === "/") throw new VfsError("invalid_path", "Kann Wurzel nicht verschieben");
+		const subtree = await this.subtree(src);
+		if (subtree.length === 0) throw new VfsError("not_found", `Kein Eintrag: ${src}`);
+		for (const rec of subtree) {
+			const newPath = rec.path === src ? dst : dst + rec.path.slice(src.length);
+			await idb.put({ path: newPath, content: rec.content, mtime: Date.now() });
+			await idb.delete(rec.path);
+		}
+	}
+
+	/** Dupliziert eine Datei oder einen ganzen Teilbaum (UI-„Duplizieren"). */
+	async copy(from: string, to: string, cwd = "/"): Promise<void> {
+		const src = normalizePath(from, cwd);
+		const dst = normalizePath(to, cwd);
+		const subtree = await this.subtree(src);
+		if (subtree.length === 0) throw new VfsError("not_found", `Kein Eintrag: ${src}`);
+		for (const rec of subtree) {
+			const newPath = rec.path === src ? dst : dst + rec.path.slice(src.length);
+			await idb.put({ path: newPath, content: rec.content, mtime: Date.now() });
+		}
+	}
+
+	/** Snapshot aller Records ab einem Pfad (der Pfad selbst + alles darunter). */
+	private async subtree(path: string): Promise<FileRecord[]> {
+		const all = await idb.all();
+		const prefix = `${path}/`;
+		return all.filter((r) => r.path === path || r.path.startsWith(prefix));
+	}
+
 	/** Ein Pfad ist ein "Verzeichnis", wenn irgendeine Datei darunter liegt. */
 	async isDir(path: string): Promise<boolean> {
 		const norm = normalizePath(path);

@@ -7,14 +7,14 @@ import { requestPersistence } from "./vfs/idb.ts";
 import { seedIfNeeded } from "./vfs/seed.ts";
 import { vfs } from "./vfs/vfs.ts";
 import Terminal from "./components/Terminal.vue";
-import FileExplorer from "./components/FileExplorer.vue";
+import LibrarySidebar from "./components/LibrarySidebar.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 
 const events = ref<AgentEvent[]>([]);
 const input = ref("");
 const busy = ref(false);
 const showSettings = ref(false);
-const explorer = ref<InstanceType<typeof FileExplorer> | null>(null);
+const explorer = ref<InstanceType<typeof LibrarySidebar> | null>(null);
 const viewer = ref<{ path: string; content: string } | null>(null);
 
 const session = shallowRef<PiAgentSession | null>(null);
@@ -81,7 +81,7 @@ async function saveFile() {
 		</header>
 
 		<div class="body">
-			<FileExplorer ref="explorer" @open="openFile" />
+			<LibrarySidebar ref="explorer" @open="openFile" />
 
 			<main class="main">
 				<Terminal :events="events" :busy="busy" />
@@ -90,7 +90,7 @@ async function saveFile() {
 					<input
 						v-model="input"
 						:disabled="busy"
-						placeholder="Aufgabe an den pi-Agenten (z.B. „Fasse /cases/2026-001/sachverhalt.md zusammen“)"
+						placeholder="Frag den Assistenten zum geöffneten Dokument – z.B. „Fasse diesen Fall zusammen“"
 						autofocus
 					/>
 					<button v-if="!busy" type="submit" :disabled="!input.trim()">Senden</button>
