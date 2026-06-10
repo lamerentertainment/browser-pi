@@ -5,13 +5,16 @@
 // und zeigen ihre Dokumente.
 import { onMounted, reactive, ref } from "vue";
 import {
+	createDocument,
 	createEntry,
+	deleteEntry,
 	type LibraryDef,
 	type LibraryEntry,
 	LIBRARIES,
 	type LibraryId,
 	loadLibrary,
 } from "../library/library.ts";
+import ConfirmDialog from "./ConfirmDialog.vue";
 import Modal from "./Modal.vue";
 
 const emit = defineEmits<{ open: [path: string] }>();
@@ -28,10 +31,16 @@ const openSections = reactive<Record<LibraryId, boolean>>({
 });
 const expandedCases = reactive<Set<string>>(new Set());
 
-// Anlege-Dialog.
-const creating = ref<LibraryDef | null>(null);
+// Anlege-Dialog: entweder ein neuer Bibliotheks-Eintrag oder ein Dokument im Fall.
+type CreateTarget =
+	| { kind: "library"; def: LibraryDef }
+	| { kind: "caseDoc"; folder: string; sectionId: LibraryId };
+const creating = ref<{ target: CreateTarget; label: string; field: string } | null>(null);
 const newTitle = ref("");
 const creatingBusy = ref(false);
+
+// Lösch-Bestätigung für einen ganzen Fall.
+const deletingCase = ref<LibraryEntry | null>(null);
 
 async function refresh() {
 	for (const def of LIBRARIES) {
@@ -49,24 +58,47 @@ function toggleCase(path: string) {
 }
 
 function startCreate(def: LibraryDef) {
-	creating.value = def;
+	creating.value = { target: { kind: "library", def }, label: def.newLabel, field: def.newField };
 	newTitle.value = "";
 }
 
+function startAddDocument(caseEntry: LibraryEntry) {
+	creating.value = {
+		target: { kind: "caseDoc", folder: caseEntry.path, sectionId: "cases" },
+		label: `Neues Dokument in „${caseEntry.title}“`,
+		field: "Titel des Dokuments",
+	};
+	newTitle.value = "";
+	expandedCases.add(caseEntry.path);
+}
+
 async function confirmCreate() {
-	const def = creating.value;
+	const dialog = creating.value;
 	const title = newTitle.value.trim();
-	if (!def || !title || creatingBusy.value) return;
+	if (!dialog || !title || creatingBusy.value) return;
 	creatingBusy.value = true;
 	try {
-		const path = await createEntry(def, title);
+		const { target } = dialog;
+		const path =
+			target.kind === "library"
+				? await createEntry(target.def, title)
+				: await createDocument(target.folder, title);
 		await refresh();
-		openSections[def.id] = true;
+		openSections[target.kind === "library" ? target.def.id : target.sectionId] = true;
 		creating.value = null;
 		emit("open", path);
 	} finally {
 		creatingBusy.value = false;
 	}
+}
+
+async function confirmDeleteCase() {
+	const target = deletingCase.value;
+	if (!target) return;
+	await deleteEntry(target.path);
+	expandedCases.delete(target.path);
+	deletingCase.value = null;
+	await refresh();
 }
 
 defineExpose({ refresh });
@@ -90,10 +122,22 @@ onMounted(refresh);
 				<template v-for="entry in entries[def.id]" :key="entry.path">
 					<!-- Fälle: aufklappbar, mit Dokumenten darunter -->
 					<li v-if="def.nested" class="case">
-						<button class="entry case-row" @click="toggleCase(entry.path)">
-							<span class="caret">{{ expandedCases.has(entry.path) ? "▾" : "▸" }}</span>
-							<span class="case-icon">📁</span>{{ entry.title }}
-						</button>
+						<div class="case-head">
+							<button class="entry case-row" @click="toggleCase(entry.path)">
+								<span class="caret">{{ expandedCases.has(entry.path) ? "▾" : "▸" }}</span>
+								<span class="case-icon">📁</span>{{ entry.title }}
+							</button>
+							<button
+								class="row-act"
+								title="Dokument hinzufügen"
+								@click="startAddDocument(entry)"
+							>
+								＋
+							</button>
+							<button class="row-act danger" title="Fall löschen" @click="deletingCase = entry">
+								🗑
+							</button>
+						</div>
 						<ul v-if="expandedCases.has(entry.path)" class="docs">
 							<li v-for="doc in entry.documents" :key="doc.path">
 								<button class="entry doc" @click="emit('open', doc.path)">
@@ -112,13 +156,9 @@ onMounted(refresh);
 			</ul>
 		</section>
 
-		<Modal
-			v-if="creating"
-			:title="creating.newLabel"
-			@close="creating = null"
-		>
+		<Modal v-if="creating" :title="creating.label" @close="creating = null">
 			<label class="field">
-				<span>{{ creating.newField }}</span>
+				<span>{{ creating.field }}</span>
 				<input
 					v-model="newTitle"
 					autofocus
@@ -137,6 +177,16 @@ onMounted(refresh);
 				</button>
 			</template>
 		</Modal>
+
+		<ConfirmDialog
+			v-if="deletingCase"
+			title="Fall löschen"
+			:message="`Der Fall „${deletingCase.title}“ und alle darin enthaltenen Dokumente werden endgültig gelöscht. Fortfahren?`"
+			confirm-label="Fall löschen"
+			danger
+			@confirm="confirmDeleteCase"
+			@cancel="deletingCase = null"
+		/>
 	</div>
 </template>
 
@@ -202,7 +252,22 @@ onMounted(refresh);
 }
 .entry:hover { background: #161b22; }
 .doc-icon, .case-icon { font-size: 11px; }
-.case-row { font-weight: 500; }
+.case-head { display: flex; align-items: center; }
+.case-head .case-row { width: auto; flex: 1; min-width: 0; font-weight: 500; }
+.row-act {
+	background: none;
+	border: none;
+	color: #6e7681;
+	cursor: pointer;
+	font-size: 12px;
+	line-height: 1;
+	padding: 4px 6px;
+	border-radius: 5px;
+	opacity: 0;
+}
+.case-head:hover .row-act { opacity: 1; }
+.row-act:hover { background: #161b22; color: #adbac7; }
+.row-act.danger:hover { color: #f85149; }
 .docs { list-style: none; margin: 0; padding: 0; }
 .docs .entry { padding-left: 40px; color: #adbac7; }
 

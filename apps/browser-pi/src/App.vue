@@ -5,9 +5,9 @@ import { PiAgentSession } from "./agent/piSession.ts";
 import { settings } from "./store/settings.ts";
 import { requestPersistence } from "./vfs/idb.ts";
 import { seedIfNeeded } from "./vfs/seed.ts";
-import { vfs } from "./vfs/vfs.ts";
 import Terminal from "./components/Terminal.vue";
 import LibrarySidebar from "./components/LibrarySidebar.vue";
+import EditorDialog from "./components/EditorDialog.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 
 const events = ref<AgentEvent[]>([]);
@@ -15,7 +15,7 @@ const input = ref("");
 const busy = ref(false);
 const showSettings = ref(false);
 const explorer = ref<InstanceType<typeof LibrarySidebar> | null>(null);
-const viewer = ref<{ path: string; content: string } | null>(null);
+const editingPath = ref<string | null>(null);
 
 const session = shallowRef<PiAgentSession | null>(null);
 
@@ -57,17 +57,12 @@ function cancel() {
 	busy.value = false;
 }
 
-async function openFile(path: string) {
-	try {
-		viewer.value = { path, content: await vfs.readFile(path) };
-	} catch (e) {
-		viewer.value = { path, content: `Fehler: ${(e as Error).message}` };
-	}
+function openFile(path: string) {
+	editingPath.value = path;
 }
 
-async function saveFile() {
-	if (!viewer.value) return;
-	await vfs.writeFile(viewer.value.path, viewer.value.content);
+function onEditorClosed() {
+	editingPath.value = null;
 	explorer.value?.refresh();
 }
 </script>
@@ -98,16 +93,11 @@ async function saveFile() {
 				</form>
 			</main>
 
-			<aside v-if="viewer" class="viewer">
-				<div class="viewer-head">
-					<span>{{ viewer.path }}</span>
-					<div>
-						<button @click="saveFile">Speichern</button>
-						<button @click="viewer = null">✕</button>
-					</div>
-				</div>
-				<textarea v-model="viewer.content" spellcheck="false"></textarea>
-			</aside>
+			<EditorDialog
+				v-if="editingPath"
+				:path="editingPath"
+				@close="onEditorClosed"
+			/>
 		</div>
 
 		<SettingsPanel
@@ -175,42 +165,4 @@ async function saveFile() {
 }
 .inputbar button:disabled { opacity: 0.5; cursor: not-allowed; }
 .inputbar button.stop { background: #da3633; border-color: #f85149; }
-.viewer {
-	width: 380px;
-	border-left: 1px solid #21262d;
-	background: #0d1117;
-	display: flex;
-	flex-direction: column;
-}
-.viewer-head {
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	padding: 8px 12px;
-	border-bottom: 1px solid #21262d;
-	color: #8b949e;
-	font-size: 12px;
-	font-family: ui-monospace, monospace;
-}
-.viewer-head button {
-	background: #21262d;
-	border: 1px solid #30363d;
-	border-radius: 5px;
-	color: #c9d1d9;
-	padding: 4px 10px;
-	cursor: pointer;
-	margin-left: 6px;
-	font-size: 12px;
-}
-.viewer textarea {
-	flex: 1;
-	background: #0b0e14;
-	border: none;
-	color: #c9d1d9;
-	padding: 12px;
-	font-family: ui-monospace, monospace;
-	font-size: 12px;
-	resize: none;
-	outline: none;
-}
 </style>

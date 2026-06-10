@@ -4,7 +4,7 @@
 // "Zielgruppe & Bedienkonzept"). Die Pfade bleiben reines Implementierungsdetail
 // — derselbe Namensraum, auf dem der Agent mit seinen Tools arbeitet.
 
-import { basename, vfs } from "../vfs/vfs.ts";
+import { basename, dirname, vfs } from "../vfs/vfs.ts";
 
 export type LibraryId = "prompts" | "textblocks" | "cases";
 
@@ -175,4 +175,63 @@ export async function createEntry(def: LibraryDef, title: string): Promise<strin
 	const path = await uniquePath(def.prefix, slug);
 	await vfs.writeFile(path, def.template(title));
 	return path;
+}
+
+export interface ParsedDoc {
+	/** Titel aus der ersten H1. */
+	title: string;
+	/** Restlicher Inhalt ohne die H1-Zeile. */
+	body: string;
+}
+
+/** Trennt Titel (H1) und Rumpf, damit der Editor beides getrennt zeigt. */
+export function parseDoc(content: string): ParsedDoc {
+	const m = content.match(/^\s*#\s+(.+?)[ \t]*(?:\r?\n|$)/);
+	if (!m) return { title: "", body: content };
+	return { title: m[1].trim(), body: content.slice(m[0].length).replace(/^\r?\n+/, "") };
+}
+
+/** Setzt Titel (als H1) und Rumpf wieder zu einem Markdown-Dokument zusammen. */
+export function serializeDoc(title: string, body: string): string {
+	const t = title.trim();
+	const b = body.replace(/^\r?\n+/, "");
+	if (!t) return b;
+	return b ? `# ${t}\n\n${b}` : `# ${t}\n`;
+}
+
+/**
+ * Speichert Titel + Inhalt. Ändert sich der Titel, wird die Datei zusätzlich auf
+ * einen passenden Slug umbenannt (hält den agent-sichtbaren Pfad sprechend).
+ * Gibt den finalen Pfad zurück (kann sich durch Umbenennen geändert haben).
+ */
+export async function saveEntry(path: string, title: string, body: string): Promise<string> {
+	await vfs.writeFile(path, serializeDoc(title, body));
+	const desired = slugify(title);
+	const currentBase = basename(path).replace(/\.md$/i, "");
+	if (!title.trim() || desired === currentBase) return path;
+	const target = await uniquePath(dirname(path), desired);
+	await vfs.move(path, target);
+	return target;
+}
+
+/** Dupliziert einen Eintrag als „… (Kopie)" im selben Bereich. */
+export async function duplicateEntry(path: string): Promise<string> {
+	const content = await vfs.readFile(path);
+	const { title, body } = parseDoc(content);
+	const newTitle = `${title || prettify(basename(path))} (Kopie)`;
+	const target = await uniquePath(dirname(path), slugify(newTitle));
+	await vfs.writeFile(target, serializeDoc(newTitle, body));
+	return target;
+}
+
+/** Löscht einen Eintrag (Datei) oder einen ganzen Fall-Ordner. */
+export async function deleteEntry(path: string): Promise<void> {
+	await vfs.delete(path);
+}
+
+/** Legt ein neues Dokument innerhalb eines Falls an. */
+export async function createDocument(caseFolder: string, title: string): Promise<string> {
+	const target = await uniquePath(caseFolder, slugify(title));
+	await vfs.writeFile(target, `# ${title}\n\n`);
+	return target;
 }
