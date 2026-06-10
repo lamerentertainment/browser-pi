@@ -54,7 +54,14 @@ function tokenize(input: string): string[] {
 			}
 			continue;
 		}
-		if (ch === "|" || ch === ">") {
+		// Einzelnes & (Hintergrundausführung) gilt als Literal, nicht als Operator.
+		if (ch === "&" && input[i + 1] !== "&") {
+			cur += ch;
+			has = true;
+			continue;
+		}
+		// Befehlstrenner und Operatoren: | && ; > >>
+		if (ch === "|" || ch === ">" || ch === ";" || ch === "&") {
 			if (has) {
 				tokens.push(cur);
 				cur = "";
@@ -62,6 +69,9 @@ function tokenize(input: string): string[] {
 			}
 			if (ch === ">" && input[i + 1] === ">") {
 				tokens.push(">>");
+				i++;
+			} else if (ch === "&") {
+				tokens.push("&&");
 				i++;
 			} else {
 				tokens.push(ch);
@@ -73,6 +83,33 @@ function tokenize(input: string): string[] {
 	}
 	if (has) tokens.push(cur);
 	return tokens;
+}
+
+// Eine Befehlsliste: Pipelines, verbunden über && (nur bei Erfolg) oder ; (immer).
+interface ListSegment {
+	tokens: string[];
+	// Operator VOR diesem Segment ("first" für das erste).
+	op: "&&" | ";" | "first";
+}
+
+function splitList(tokens: string[]): ListSegment[] {
+	const segments: ListSegment[] = [];
+	let cur: string[] = [];
+	let op: ListSegment["op"] = "first";
+	const flush = (next: ListSegment["op"]) => {
+		if (cur.length) segments.push({ tokens: cur, op });
+		cur = [];
+		op = next;
+	};
+	for (const t of tokens) {
+		if (t === "&&" || t === ";") {
+			flush(t);
+		} else {
+			cur.push(t);
+		}
+	}
+	flush("first");
+	return segments;
 }
 
 function splitPipeline(tokens: string[]): ParsedCommand[] {
@@ -312,16 +349,8 @@ function globToRegex(glob: string): RegExp {
 
 export const ALLOWED_COMMANDS = Object.keys(builtins);
 
-export async function runShell(input: string, ctx: ShellContext): Promise<ShellResult> {
-	const trimmed = input.trim();
-	if (trimmed === "") return ok();
-	let stages: ParsedCommand[];
-	try {
-		stages = splitPipeline(tokenize(trimmed));
-	} catch (e) {
-		return fail(`${(e as Error).message}\n`, 2);
-	}
-
+// Führt eine einzelne Pipeline (durch | verbundene Stufen) aus.
+async function runPipeline(stages: ParsedCommand[], ctx: ShellContext): Promise<ShellResult> {
 	let stdin = "";
 	let last: ShellResult = ok();
 	for (let i = 0; i < stages.length; i++) {
@@ -351,4 +380,36 @@ export async function runShell(input: string, ctx: ShellContext): Promise<ShellR
 		stdin = last.stdout;
 	}
 	return last;
+}
+
+export async function runShell(input: string, ctx: ShellContext): Promise<ShellResult> {
+	const trimmed = input.trim();
+	if (trimmed === "") return ok();
+	let segments: ListSegment[];
+	try {
+		segments = splitList(tokenize(trimmed));
+	} catch (e) {
+		return fail(`${(e as Error).message}\n`, 2);
+	}
+
+	// Befehlsliste ausführen: stdout/stderr aller Segmente aufsammeln,
+	// && bricht die Kette bei Fehler ab, ; läuft unabhängig weiter.
+	let stdout = "";
+	let stderr = "";
+	let last: ShellResult = ok();
+	for (const seg of segments) {
+		if (seg.op === "&&" && last.exitCode !== 0) continue;
+		let stages: ParsedCommand[];
+		try {
+			stages = splitPipeline(seg.tokens);
+		} catch (e) {
+			last = fail(`${(e as Error).message}\n`, 2);
+			stderr += last.stderr;
+			continue;
+		}
+		last = await runPipeline(stages, ctx);
+		stdout += last.stdout;
+		stderr += last.stderr;
+	}
+	return { stdout, stderr, exitCode: last.exitCode };
 }
