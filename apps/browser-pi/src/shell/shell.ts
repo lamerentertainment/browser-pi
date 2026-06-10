@@ -5,7 +5,7 @@
 // Pipes (|) und Redirect (>, >>) werden unterstützt; Befehle ausserhalb der
 // Whitelist werden mit "command not found" abgewiesen.
 
-import { basename, normalizePath, vfs, VfsError } from "../vfs/vfs.ts";
+import { basename, type DirEntry, normalizePath, vfs, VfsError } from "../vfs/vfs.ts";
 
 export interface ShellResult {
 	stdout: string;
@@ -184,27 +184,60 @@ const builtins: Record<string, Builtin> = {
 	},
 
 	ls: async (argv, _stdin, ctx) => {
+		// Unterstützt -l (lang), -R (rekursiv), -a (versteckte .-Einträge) und
+		// mehrere Pfade. Nicht existente Pfade -> Fehler (nicht stille Leere).
 		const { flags, args } = parseFlags(argv);
-		const target = args[0] ?? ctx.cwd;
-		try {
-			const norm = normalizePath(target, ctx.cwd);
-			// Datei statt Verzeichnis?
-			if (!(await vfs.isDir(norm)) && (await vfs.exists(norm))) {
-				return ok(`${basename(norm)}\n`);
-			}
+		const targets = args.length ? args : [ctx.cwd];
+		const recursive = flags.has("R");
+		const showHeaders = recursive || targets.length > 1;
+		const out: string[] = [];
+		const errs: string[] = [];
+
+		const formatEntry = (e: DirEntry): string =>
+			flags.has("l")
+				? `${e.type === "dir" ? "d" : "-"} ${String(e.size).padStart(7)} ${e.name}${e.type === "dir" ? "/" : ""}`
+				: e.type === "dir"
+					? `${e.name}/`
+					: e.name;
+
+		const listDir = async (norm: string): Promise<DirEntry[]> => {
 			const entries = await vfs.list(norm, ctx.cwd);
-			if (flags.has("l")) {
-				const lines = entries.map(
-					(e) =>
-						`${e.type === "dir" ? "d" : "-"} ${String(e.size).padStart(7)} ${e.name}${e.type === "dir" ? "/" : ""}`,
-				);
-				return ok(`${lines.join("\n")}${lines.length ? "\n" : ""}`);
+			return flags.has("a") ? entries : entries.filter((e) => !e.name.startsWith("."));
+		};
+
+		const renderDir = async (norm: string): Promise<void> => {
+			const entries = await listDir(norm);
+			if (showHeaders) out.push(`${norm}:`);
+			for (const e of entries) out.push(formatEntry(e));
+			if (showHeaders) out.push("");
+			if (recursive) {
+				for (const e of entries) {
+					if (e.type === "dir") await renderDir(e.path);
+				}
 			}
-			const names = entries.map((e) => (e.type === "dir" ? `${e.name}/` : e.name));
-			return ok(`${names.join("\n")}${names.length ? "\n" : ""}`);
-		} catch (e) {
-			return fail(`ls: ${(e as Error).message}\n`);
+		};
+
+		for (const target of targets) {
+			try {
+				const norm = normalizePath(target, ctx.cwd);
+				if (await vfs.isDir(norm)) {
+					await renderDir(norm);
+				} else if (await vfs.exists(norm)) {
+					out.push(formatEntry({ name: basename(norm), path: norm, type: "file", size: 0, mtime: 0 }));
+				} else {
+					errs.push(`ls: ${target}: Datei oder Verzeichnis nicht gefunden`);
+				}
+			} catch (e) {
+				errs.push(`ls: ${(e as Error).message}`);
+			}
 		}
+
+		const stdout = out.join("\n").replace(/\n+$/, "");
+		return {
+			stdout: stdout ? `${stdout}\n` : "",
+			stderr: errs.length ? `${errs.join("\n")}\n` : "",
+			exitCode: errs.length ? 1 : 0,
+		};
 	},
 
 	cat: async (argv, _stdin, ctx) => {
