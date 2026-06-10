@@ -1,0 +1,12 @@
+{
+  "projects": {
+    "default": "gen-lang-client-0915148106"
+  },
+  "targets": {
+    "gen-lang-client-0915148106": {
+      "hosting": {
+        "browser-pi": ["browser-pi-krg"]
+      }
+    }
+  }
+}
