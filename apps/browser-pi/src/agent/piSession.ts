@@ -48,10 +48,24 @@ function assistantText(msg: AssistantMessage): string {
 		.join("");
 }
 
+/** Schmale Sicht auf die pi-ai-Stream-Chunks, die wir in UI-Events übersetzen. */
+type StreamChunk =
+	| { type: "thinking_delta"; delta: string }
+	| { type: "text_delta"; delta: string }
+	| { type: "thinking_end" }
+	| { type: "text_end" }
+	| { type: string };
+
 export class PiAgentSession {
 	private agent: Agent;
 	private ctx: ShellContext = { cwd: "/" };
 	private config: LlmConfig;
+
+	// Streaming-Zustand der laufenden Assistant-Nachricht.
+	private reasoningBuf = "";
+	private textBuf = "";
+	private reasoningOpen = false; // reasoning wird gerade gestreamt (noch nicht eingefroren)
+	private textOpen = false; // antwort-text wird gerade gestreamt
 
 	constructor(config: LlmConfig, private emit: EventSink) {
 		this.config = config;
@@ -95,14 +109,65 @@ export class PiAgentSession {
 		}
 	}
 
+	// Token-für-Token-Chunks aus message_update -> Streaming-UI-Events.
+	private onStreamChunk(chunk: StreamChunk): void {
+		switch (chunk.type) {
+			case "thinking_delta":
+				this.reasoningBuf += (chunk as { delta: string }).delta;
+				this.reasoningOpen = true;
+				this.emit({ type: "reasoning", text: this.reasoningBuf, streaming: true });
+				break;
+			case "thinking_end":
+				if (this.reasoningOpen) {
+					this.emit({ type: "reasoning", text: this.reasoningBuf, streaming: false });
+					this.reasoningOpen = false;
+				}
+				break;
+			case "text_delta":
+				this.textBuf += (chunk as { delta: string }).delta;
+				this.textOpen = true;
+				this.emit({ type: "assistant", text: this.textBuf, streaming: true });
+				break;
+			case "text_end":
+				if (this.textOpen) {
+					this.emit({ type: "assistant", text: this.textBuf, streaming: false });
+					this.textOpen = false;
+				}
+				break;
+		}
+	}
+
 	// --- Mapping pi-AgentEvent -> UI-Event (events.ts) ---------------------
 	private onPiEvent(event: PiAgentEvent): void {
 		switch (event.type) {
+			case "message_start":
+				// Neue Assistant-Nachricht: Streaming-Zustand zurücksetzen.
+				this.reasoningBuf = "";
+				this.textBuf = "";
+				this.reasoningOpen = false;
+				this.textOpen = false;
+				break;
+
+			case "message_update":
+				this.onStreamChunk(event.assistantMessageEvent as StreamChunk);
+				break;
+
 			case "message_end": {
 				const m = event.message;
 				if (m.role === "assistant") {
+					// Offene Streams einfrieren (falls *_end-Chunk ausblieb).
+					if (this.reasoningOpen) {
+						this.emit({ type: "reasoning", text: this.reasoningBuf, streaming: false });
+						this.reasoningOpen = false;
+					}
 					const text = assistantText(m);
-					if (text) this.emit({ type: "assistant", text });
+					if (this.textOpen) {
+						this.emit({ type: "assistant", text: text || this.textBuf, streaming: false });
+						this.textOpen = false;
+					} else if (!this.textBuf && text) {
+						// Kein Live-Streaming (z.B. nicht-streamender Fallback) -> einmalig.
+						this.emit({ type: "assistant", text });
+					}
 					if (m.stopReason === "error" && m.errorMessage) {
 						this.emit({ type: "error", text: m.errorMessage });
 					}

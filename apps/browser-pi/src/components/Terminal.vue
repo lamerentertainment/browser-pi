@@ -25,8 +25,16 @@ function argsPreview(args: Record<string, unknown>): string {
 			<template v-if="ev.type === 'user'">
 				<span class="prompt">›</span> <span class="user-text">{{ ev.text }}</span>
 			</template>
+			<template v-else-if="ev.type === 'reasoning'">
+				<details class="reasoning" :open="ev.streaming">
+					<summary>💭 {{ ev.streaming ? "Überlegt …" : "Überlegung" }}</summary>
+					<div class="reasoning-body">{{ ev.text
+						}}<span v-if="ev.streaming" class="blink">▌</span></div>
+				</details>
+			</template>
 			<template v-else-if="ev.type === 'assistant'">
-				<span class="assistant-text">{{ ev.text }}</span>
+				<span class="assistant-text">{{ ev.text
+					}}<span v-if="ev.streaming" class="blink">▌</span></span>
 			</template>
 			<template v-else-if="ev.type === 'tool_call'">
 				<span class="tool">⚙ {{ ev.name }}</span>
@@ -69,6 +77,26 @@ function argsPreview(args: Record<string, unknown>): string {
 .prompt { color: #7ee787; font-weight: bold; }
 .user-text { color: #e6edf3; }
 .assistant-text { color: #c9d1d9; white-space: pre-wrap; }
+.reasoning { color: #8b949e; margin: 2px 0; }
+.reasoning > summary {
+	cursor: pointer;
+	color: #6e7681;
+	font-style: italic;
+	font-size: 12px;
+	list-style: none;
+	user-select: none;
+}
+.reasoning > summary::-webkit-details-marker { display: none; }
+.reasoning-body {
+	margin: 4px 0 6px 0;
+	padding: 6px 10px;
+	border-left: 2px solid #30363d;
+	background: #0d1117;
+	color: #6e7681;
+	font-style: italic;
+	font-size: 12px;
+	white-space: pre-wrap;
+}
 .tool { color: #79c0ff; font-weight: bold; margin-right: 8px; }
 .tool-args { color: #6e7681; }
 .tool-result {

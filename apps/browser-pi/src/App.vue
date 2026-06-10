@@ -25,7 +25,18 @@ onMounted(async () => {
 	session.value = new PiAgentSession(settings, (ev) => {
 		// Status-Events ersetzen die jeweils letzte Statuszeile (kein Spam).
 		if (ev.type === "status") return;
-		events.value = [...events.value, ev];
+		// Streaming-Events (reasoning/assistant) ersetzen das jeweils letzte,
+		// noch laufende Event gleichen Typs, statt jedes Token als neue Zeile
+		// anzuhängen. Eingefrorene (streaming !== true) Events bleiben stehen.
+		const last = events.value[events.value.length - 1];
+		const coalesce =
+			(ev.type === "reasoning" || ev.type === "assistant") &&
+			last?.type === ev.type &&
+			"streaming" in last &&
+			last.streaming === true;
+		events.value = coalesce
+			? [...events.value.slice(0, -1), ev]
+			: [...events.value, ev];
 		if (ev.type === "tool_result") explorer.value?.refresh();
 	});
 });
