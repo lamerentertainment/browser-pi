@@ -27,6 +27,35 @@ Die zentrale Idee:
 **nicht** an kommerzielle LLM-Provider gehen dürfen. Die App spricht deshalb
 **ausschliesslich lokale LLMs** an (kein OpenAI/Anthropic/Gemini).
 
+## Zielgruppe & Bedienkonzept
+
+**browser-pi richtet sich an nicht versierte Anfänger im Umgang mit KI-Agenten.** Die
+Anwender sind keine Entwickler und kennen weder Shell-Konzepte noch Dateipfade. Das
+simulierte Terminal ist die **Bühne des Agenten** (er zeigt darin, was er tut) — es ist
+**nicht** die Bedienoberfläche, mit der der Nutzer seine Inhalte verwaltet.
+
+Daraus folgt eine harte Anforderung an das UI:
+
+> Die Verwaltung der Inhalte — **Prompts, Textbausteine und Dokumente** (die drei
+> Bibliotheken aus den fachlichen Dokument-Domänen) — muss auf **konventionelle,
+> vertraute Weise** möglich sein, **ohne** dass der Nutzer das Terminal oder
+> Shell-Befehle benutzen muss.
+
+- **Konventionelle Dateiverwaltung statt Shell:** Anlegen, Öffnen, Umbenennen, Bearbeiten,
+  Duplizieren und Löschen von Prompts/Textbausteinen/Dokumenten geschehen über
+  **gewohnte UI-Muster** — Listen-/Karten-Ansichten, Buttons, Formulare und insbesondere
+  **Modals/Dialoge** (z. B. „Neuer Prompt", „Dokument bearbeiten", „Wirklich löschen?").
+  Vorbild ist die Bedienung von `iusable_anonymization`, nicht ein Dateimanager für
+  Entwickler.
+- **Zwei Wege auf dieselben Daten:** Der Nutzer bearbeitet seine Inhalte per UI; der Agent
+  bearbeitet dieselben Inhalte per „Shell"-Tools auf dem VFS. Beide Pfade wirken auf das
+  **gleiche** virtuelle Dokumenten-Dateisystem (Prinzip 2) — die UI ist die menschliche,
+  das Tool-Interface die agentische Sicht auf denselben Namensraum.
+- **Terminal optional, nie Pflicht:** Das Terminal bleibt sichtbar als Transparenz- und
+  Vertrauensmittel (man sieht, was der Agent tut), darf aber für keine alltägliche
+  Nutzeraufgabe vorausgesetzt werden. Fachbegriffe, Pfade und Befehle gehören nicht in den
+  primären Bedienfluss des Anfängers.
+
 ## Die drei Kern-Prinzipien
 
 ### 1. pi-Agent im Browser, mit simuliertem Terminal
@@ -108,7 +137,9 @@ Drei Bibliotheken/Domänen leben im VFS und sind die fachliche Substanz der App:
 
 Der Agent arbeitet auf genau diesen Dokumenten mit seinen "Shell"-Tools: Fälle
 durchsuchen (`grep`/`find`), Dokumente lesen/schreiben (`read`/`write`/`edit`),
-Textblöcke einsetzen, Prompts ausführen.
+Textblöcke einsetzen, Prompts ausführen. **Der Nutzer** arbeitet auf denselben
+Dokumenten über die konventionelle UI (Listen, Formulare, Modals) — siehe
+[Zielgruppe & Bedienkonzept](#zielgruppe--bedienkonzept).
 
 ## Repo-Landkarte (relevant für die Weiterentwicklung)
 
@@ -130,6 +161,10 @@ Textblöcke einsetzen, Prompts ausführen.
   direkte LLM-Call an den lokalen Ollama/OpenWebUI-Endpoint. Export/Import statt
   Cloud-Zwang.
 - **Den Event-Stream rendern, nicht die TUI portieren.**
+- **Anfänger-taugliches UI, Shell nie Pflicht:** Die Inhalts-Verwaltung (Prompts,
+  Textbausteine, Dokumente) erfolgt über konventionelle UI-Muster (Listen, Formulare,
+  Modals). Kein alltäglicher Nutzerablauf darf das Terminal oder Shell-Befehle
+  voraussetzen — siehe [Zielgruppe & Bedienkonzept](#zielgruppe--bedienkonzept).
 - **Entwicklungsregeln:** siehe [AGENTS.md](AGENTS.md) (Code-Qualität, erasable TS,
   `npm run check`, Tests via `./test.sh`, Git-/Commit-Regeln). Diese gelten weiterhin.
 
