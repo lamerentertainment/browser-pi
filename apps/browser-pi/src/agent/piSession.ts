@@ -12,6 +12,7 @@ import type { EventSink } from "./events.ts";
 import { createBrowserStreamFn } from "./piStream.ts";
 import { createPiTools } from "./piTools.ts";
 import type { LlmConfig } from "./llm.ts";
+import { vfs } from "../vfs/vfs.ts";
 
 const SYSTEM_PROMPT = `Du bist pi, ein Agent, der vollständig im Browser läuft und in einem
 sandboxierten Dokumenten-Dateisystem arbeitet (Verzeichnisse: /cases, /prompts,
@@ -24,6 +25,35 @@ Arbeitsweise:
 - Wenn die Aufgabe erledigt ist, antworte knapp auf Deutsch ohne weiteren Tool-Call.
 
 Sensible Inhalte verlassen den Browser nie.`;
+
+async function buildSystemPrompt(): Promise<string> {
+	try {
+		const files = await vfs.list("/prompts");
+		const promptLines: string[] = [];
+		for (const file of files) {
+			if (file.type === "file") {
+				try {
+					const content = await vfs.readFile(file.path);
+					// Extract the title (H1) or use the filename.
+					const m = content.match(/^#\s+(.+?)\s*$/m);
+					const title = m?.[1]?.trim() || file.name.replace(/\.md$/i, "");
+					promptLines.push(`- Title: "${title}" (Path: "${file.path}")`);
+				} catch (e) {
+					promptLines.push(`- Path: "${file.path}"`);
+				}
+			}
+		}
+
+		let promptSection = "";
+		if (promptLines.length > 0) {
+			promptSection = `\n\nVerfügbare Prompt-Vorlagen im System:\n${promptLines.join("\n")}\nWenn eine dieser Vorlagen für die Aufgabe nützlich ist, kannst du sie mit dem read/grep Tool lesen, um ihre Anweisungen präzise zu berücksichtigen und anzuwenden.`;
+		}
+
+		return SYSTEM_PROMPT + promptSection;
+	} catch (err) {
+		return SYSTEM_PROMPT;
+	}
+}
 
 /** Baut ein OpenAI-kompatibles Model-Objekt aus der Nutzerkonfiguration. */
 function buildModel(config: LlmConfig): Model<"openai-completions"> {
@@ -101,6 +131,7 @@ export class PiAgentSession {
 	async send(userText: string): Promise<{ cancelled: boolean }> {
 		this.emit({ type: "user", text: userText });
 		try {
+			this.agent.state.systemPrompt = await buildSystemPrompt();
 			await this.agent.prompt(userText);
 			return { cancelled: false };
 		} catch (e) {
