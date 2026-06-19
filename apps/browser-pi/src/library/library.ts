@@ -231,6 +231,40 @@ export async function saveEntry(path: string, title: string, body: string): Prom
 	return target;
 }
 
+/**
+ * Benennt einen Fall um. Zwei Wirkungen, passend zu den zwei Sichten auf den
+ * Namensraum (CLAUDE.md, „Zwei Wege auf dieselben Daten"):
+ *  1. Der H1-Titel im Leitdokument (Sachverhalt) wird angepasst — er treibt den
+ *     in der UI angezeigten Fall-Namen (siehe caseTitle).
+ *  2. Der Fall-Ordner wird auf einen neuen Slug umbenannt — er treibt den
+ *     agent-sichtbaren Pfad und bleibt so sprechend.
+ * Gibt den (ggf. neuen) Ordner-Pfad zurück.
+ */
+export async function renameCase(caseFolder: string, newTitle: string): Promise<string> {
+	const title = newTitle.trim();
+	if (!title) return caseFolder;
+	// 1. H1 im Leitdokument anpassen — nur bei Text-Dokumenten (Binär-Importe
+	//    tragen keinen Markdown-Titel, den caseTitle lesen könnte).
+	const documents = await loadDocuments(caseFolder);
+	const lead = documents.find((d) => /sachverhalt/i.test(d.path)) ?? documents[0];
+	if (lead && !lead.mime) {
+		const { body } = parseDoc(await vfs.readFile(lead.path));
+		await vfs.writeFile(lead.path, serializeDoc(title, body));
+	}
+	// 2. Ordner-Slug umbenennen, falls er sich ändert.
+	const desired = slugify(title);
+	if (desired === basename(caseFolder)) return caseFolder;
+	const parent = dirname(caseFolder);
+	let target = `${parent}/${desired}`;
+	let n = 2;
+	while (await vfs.exists(target)) {
+		target = `${parent}/${desired}-${n}`;
+		n++;
+	}
+	await vfs.move(caseFolder, target);
+	return target;
+}
+
 /** Dupliziert einen Eintrag als „… (Kopie)" im selben Bereich. */
 export async function duplicateEntry(path: string): Promise<string> {
 	const content = await vfs.readFile(path);

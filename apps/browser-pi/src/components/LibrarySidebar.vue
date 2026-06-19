@@ -13,6 +13,7 @@ import {
 	LIBRARIES,
 	type LibraryId,
 	loadLibrary,
+	renameCase,
 	uploadDocument,
 } from "../library/library.ts";
 import { ACCEPTED_EXTENSIONS } from "../import/extract.ts";
@@ -43,6 +44,11 @@ const creatingBusy = ref(false);
 
 // Lösch-Bestätigung für einen ganzen Fall.
 const deletingCase = ref<LibraryEntry | null>(null);
+
+// Umbenennen eines ganzen Falls.
+const renamingCase = ref<LibraryEntry | null>(null);
+const renameTitle = ref("");
+const renamingBusy = ref(false);
 
 // Datei-Upload in einen Fall (PDF/DOCX/TXT).
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -132,6 +138,27 @@ async function confirmCreate() {
 	}
 }
 
+function startRename(caseEntry: LibraryEntry) {
+	renamingCase.value = caseEntry;
+	renameTitle.value = caseEntry.title;
+}
+
+async function confirmRename() {
+	const target = renamingCase.value;
+	const title = renameTitle.value.trim();
+	if (!target || !title || renamingBusy.value) return;
+	renamingBusy.value = true;
+	try {
+		const newPath = await renameCase(target.path, title);
+		// Aufklapp-Zustand auf den (ggf. neuen) Pfad übertragen.
+		if (expandedCases.delete(target.path)) expandedCases.add(newPath);
+		renamingCase.value = null;
+		await refresh();
+	} finally {
+		renamingBusy.value = false;
+	}
+}
+
 async function confirmDeleteCase() {
 	const target = deletingCase.value;
 	if (!target) return;
@@ -182,6 +209,9 @@ onMounted(refresh);
 							>
 								📎
 							</button>
+							<button class="row-act" title="Fall umbenennen" @click="startRename(entry)">
+								✏️
+							</button>
 							<button class="row-act danger" title="Fall löschen" @click="deletingCase = entry">
 								🗑
 							</button>
@@ -222,6 +252,27 @@ onMounted(refresh);
 					@click="confirmCreate"
 				>
 					Anlegen
+				</button>
+			</template>
+		</Modal>
+
+		<Modal v-if="renamingCase" title="Fall umbenennen" @close="renamingCase = null">
+			<label class="field">
+				<span>Name des Falls</span>
+				<input
+					v-model="renameTitle"
+					autofocus
+					@keydown.enter.prevent="confirmRename"
+				/>
+			</label>
+			<template #footer>
+				<button class="btn ghost" @click="renamingCase = null">Abbrechen</button>
+				<button
+					class="btn primary"
+					:disabled="!renameTitle.trim() || renamingBusy"
+					@click="confirmRename"
+				>
+					Umbenennen
 				</button>
 			</template>
 		</Modal>
