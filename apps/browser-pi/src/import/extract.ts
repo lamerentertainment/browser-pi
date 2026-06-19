@@ -29,6 +29,16 @@ export function isSupported(name: string): boolean {
 	return ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
+/**
+ * Seitengrenzen werden für den Agenten explizit markiert, statt im Fliesstext
+ * unterzugehen. Eine eigene, deutlich abgesetzte Zeile, damit der Agent sie als
+ * Meta-Information referenzieren ("auf Seite 3 steht …") und nicht als
+ * Dokumentinhalt missverstehen kann.
+ */
+export function pageMarker(n: number): string {
+	return `--- Seite ${n} ---`;
+}
+
 /** Extrahiert Klartext aus einer hochgeladenen Datei. */
 export async function extractText(file: File): Promise<ExtractResult> {
 	const name = file.name.toLowerCase();
@@ -36,10 +46,8 @@ export async function extractText(file: File): Promise<ExtractResult> {
 		return { text: await extractPdf(file), mime: "application/pdf" };
 	}
 	if (name.endsWith(".docx")) {
-		const arrayBuffer = await file.arrayBuffer();
-		const result = await mammoth.extractRawText({ arrayBuffer });
 		return {
-			text: result.value,
+			text: await extractDocx(file),
 			mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 		};
 	}
@@ -57,9 +65,95 @@ async function extractPdf(file: File): Promise<string> {
 		const page = await pdf.getPage(i);
 		const textContent = await page.getTextContent();
 		const items = textContent.items.filter((it): it is TextItem => "str" in it);
-		pages.push(reconstructPageText(items));
+		// PDF hat echte, feste Seiten: jede Grenze ist bekannt, also wird jede
+		// Seite (auch die erste) markiert — der Agent bekommt ein vollständiges
+		// Seiten-Koordinatensystem.
+		pages.push(`${pageMarker(i)}\n\n${reconstructPageText(items)}`);
 	}
 	return pages.join("\n\n").trim();
+}
+
+/**
+ * DOCX kennt — anders als PDF — KEINE festen Seiten: die Paginierung entsteht
+ * erst beim Rendern (Schriftart, Seitengrösse). Zuverlässig bekannt sind nur
+ * MANUELLE Seitenumbrüche (`<w:br w:type="page"/>`); automatische, layoutbedingte
+ * Umbrüche existieren in der Datei gar nicht und werden hier bewusst nicht geraten.
+ *
+ * `extractRawText` verwirft auch die manuellen Umbrüche. Deshalb über die
+ * öffentliche `convertToHtml`-API gehen und Seitenumbrüche per StyleMap auf `<hr>`
+ * mappen, dann das HTML zu Klartext wandeln und an den `<hr>` Seitenmarker setzen.
+ */
+async function extractDocx(file: File): Promise<string> {
+	const arrayBuffer = await file.arrayBuffer();
+	const { value: html } = await mammoth.convertToHtml(
+		{ arrayBuffer },
+		{ styleMap: ["br[type='page'] => hr"] },
+	);
+	return htmlToText(html);
+}
+
+/**
+ * Wandelt mammoth-HTML in Klartext. Blockelemente erzeugen Zeilenumbrüche,
+ * `<hr>` (= manueller Seitenumbruch) setzt einen Seitenmarker. Die Nummerierung
+ * startet bei 1 und zählt pro Umbruch hoch; der ERSTE Marker ist also „Seite 2".
+ * Ein DOCX ohne manuelle Umbrüche bleibt damit markerfrei — es wird keine
+ * Seitenstruktur vorgetäuscht, die das Dokument nicht hat.
+ */
+function htmlToText(html: string): string {
+	const doc = new DOMParser().parseFromString(html, "text/html");
+	let out = "";
+	let page = 1;
+
+	const walk = (node: Node): void => {
+		for (const child of Array.from(node.childNodes)) {
+			if (child.nodeType === Node.TEXT_NODE) {
+				out += child.textContent ?? "";
+				continue;
+			}
+			if (child.nodeType !== Node.ELEMENT_NODE) continue;
+			const el = child as Element;
+			switch (el.tagName) {
+				case "HR":
+					page += 1;
+					out = `${out.replace(/[ \t\n]+$/, "")}\n\n${pageMarker(page)}\n\n`;
+					break;
+				case "BR":
+					out += "\n";
+					break;
+				case "LI":
+					out += "- ";
+					walk(el);
+					out += "\n";
+					break;
+				case "TD":
+				case "TH":
+					walk(el);
+					out += "\t";
+					break;
+				case "P":
+				case "H1":
+				case "H2":
+				case "H3":
+				case "H4":
+				case "H5":
+				case "H6":
+				case "TR":
+				case "BLOCKQUOTE":
+					walk(el);
+					out += "\n\n";
+					break;
+				default:
+					walk(el);
+			}
+		}
+	};
+	walk(doc.body);
+
+	// Whitespace normalisieren: Zeilen rechts trimmen, höchstens eine Leerzeile.
+	return out
+		.replace(/[ \t]+\n/g, "\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
 }
 
 interface Box {
