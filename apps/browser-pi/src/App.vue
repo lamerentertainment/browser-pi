@@ -24,6 +24,37 @@ const showSettings = ref(false);
 const explorer = ref<InstanceType<typeof LibrarySidebar> | null>(null);
 const editingPath = ref<string | null>(null);
 
+// --- Breite der Seitenleiste (per Ziehgriff verstellbar, lokal gemerkt) ------
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 560;
+const SIDEBAR_KEY = "browser-pi:sidebar-width";
+
+function clampSidebar(px: number): number {
+	return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, px));
+}
+
+const sidebarWidth = ref(
+	clampSidebar(Number(localStorage.getItem(SIDEBAR_KEY)) || 240),
+);
+const resizing = ref(false);
+
+function startResize(e: PointerEvent): void {
+	resizing.value = true;
+	const startX = e.clientX;
+	const startWidth = sidebarWidth.value;
+	const onMove = (ev: PointerEvent) => {
+		sidebarWidth.value = clampSidebar(startWidth + (ev.clientX - startX));
+	};
+	const onUp = () => {
+		resizing.value = false;
+		localStorage.setItem(SIDEBAR_KEY, String(sidebarWidth.value));
+		window.removeEventListener("pointermove", onMove);
+		window.removeEventListener("pointerup", onUp);
+	};
+	window.addEventListener("pointermove", onMove);
+	window.addEventListener("pointerup", onUp);
+}
+
 const session = shallowRef<PiAgentSession | null>(null);
 
 // --- Slash-Command-Palette --------------------------------------------------
@@ -224,8 +255,19 @@ function onEditorClosed() {
 			<button class="gear" @click="showSettings = true">⚙ Einstellungen</button>
 		</header>
 
-		<div class="body">
-			<LibrarySidebar ref="explorer" @open="openFile" />
+		<div class="body" :class="{ resizing }">
+			<LibrarySidebar
+				ref="explorer"
+				:style="{ width: sidebarWidth + 'px', flexShrink: 0 }"
+				@open="openFile"
+			/>
+			<div
+				class="resizer"
+				role="separator"
+				aria-orientation="vertical"
+				title="Breite ziehen"
+				@pointerdown="startResize"
+			></div>
 
 			<main class="main">
 				<Terminal :events="events" :busy="busy" />
@@ -291,6 +333,15 @@ function onEditorClosed() {
 .endpoint { margin-left: auto; color: #6e7681; font-family: ui-monospace, monospace; font-size: 11px; }
 .gear { background: none; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; padding: 5px 10px; cursor: pointer; font-size: 12px; }
 .body { flex: 1; display: flex; min-height: 0; }
+.body.resizing { cursor: col-resize; user-select: none; }
+.resizer {
+	flex: 0 0 5px;
+	margin: 0 -2px;
+	cursor: col-resize;
+	background: transparent;
+	z-index: 1;
+}
+.resizer:hover, .body.resizing .resizer { background: #2f81f7; }
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .inputbar {
 	position: relative;
