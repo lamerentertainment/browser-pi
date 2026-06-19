@@ -45,7 +45,10 @@ export function createPiTools(ctx: ShellContext): AgentTool<TSchema>[] {
 	const read: AgentTool = {
 		name: "read",
 		label: "Datei lesen",
-		description: "Liest eine Datei aus dem Dokumenten-Dateisystem.",
+		description:
+			"Liest eine Datei aus dem Dokumenten-Dateisystem als Text. Funktioniert " +
+			"für JEDE Datei unabhängig von der Endung — auch .pdf und .docx: deren " +
+			"Text wurde beim Hochladen extrahiert und wird hier direkt zurückgegeben.",
 		parameters: ReadSchema,
 		execute: async (_id, params) => {
 			try {

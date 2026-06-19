@@ -4,7 +4,7 @@
 // statt Shell. Schliesst per Backdrop-Klick und Esc.
 import { onMounted, onUnmounted } from "vue";
 
-defineProps<{ title: string }>();
+defineProps<{ title: string; wide?: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 
 function onKey(e: KeyboardEvent) {
@@ -16,7 +16,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
 
 <template>
 	<div class="overlay" @click.self="emit('close')">
-		<div class="modal" role="dialog" aria-modal="true">
+		<div class="modal" :class="{ wide }" role="dialog" aria-modal="true">
 			<div class="modal-head">
 				<span class="modal-title">{{ title }}</span>
 				<button class="x" title="Schliessen" @click="emit('close')">✕</button>
@@ -40,6 +40,9 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
 .modal {
 	width: 440px;
 	max-width: calc(100vw - 32px);
+}
+.modal.wide {
+	width: 900px;
 	background: #161b22;
 	border: 1px solid #30363d;
 	border-radius: 10px;

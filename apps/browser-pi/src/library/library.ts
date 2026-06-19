@@ -4,6 +4,7 @@
 // "Zielgruppe & Bedienkonzept"). Die Pfade bleiben reines Implementierungsdetail
 // — derselbe Namensraum, auf dem der Agent mit seinen Tools arbeitet.
 
+import { extractText } from "../import/extract.ts";
 import { basename, dirname, vfs } from "../vfs/vfs.ts";
 
 export type LibraryId = "prompts" | "textblocks" | "cases";
@@ -60,6 +61,8 @@ export interface LibraryEntry {
 	/** VFS-Pfad (intern). */
 	path: string;
 	mtime: number;
+	/** MIME-Typ bei importierten Binärdokumenten (PDF/DOCX/TXT); sonst leer. */
+	mime?: string;
 	/** Nur bei Fällen: die Dokumente innerhalb des Falls. */
 	documents?: LibraryEntry[];
 }
@@ -130,10 +133,24 @@ async function loadDocuments(folder: string): Promise<LibraryEntry[]> {
 	const docs: LibraryEntry[] = [];
 	for (const it of items) {
 		if (it.type !== "file") continue;
-		const content = await vfs.readFile(it.path);
-		docs.push({ title: titleOf(content, it.path), path: it.path, mtime: it.mtime });
+		const rec = await vfs.getRecord(it.path);
+		// Importierte Binärdokumente tragen ihren Originaldateinamen als Titel; der
+		// extrahierte Text hat keine Markdown-H1, die titleOf erkennen könnte.
+		const title = rec?.mime
+			? fileLabel(basename(it.path))
+			: titleOf(rec?.content ?? "", it.path);
+		docs.push({ title, path: it.path, mtime: it.mtime, mime: rec?.mime });
 	}
 	return sortByTitle(docs);
+}
+
+/** Dateiname für die Anzeige aufbereiten, Endung behalten (z.B. "Haftbefehl.pdf"). */
+function fileLabel(name: string): string {
+	const dot = name.lastIndexOf(".");
+	const base = dot > 0 ? name.slice(0, dot) : name;
+	const ext = dot > 0 ? name.slice(dot) : "";
+	const pretty = base.replace(/[-_]+/g, " ").trim();
+	return `${pretty ? pretty.charAt(0).toUpperCase() + pretty.slice(1) : name}${ext}`;
 }
 
 /** Fall-Titel aus dem Sachverhalt-Dokument (ohne Untertitel „— Sachverhalt"). */
@@ -233,5 +250,20 @@ export async function deleteEntry(path: string): Promise<void> {
 export async function createDocument(caseFolder: string, title: string): Promise<string> {
 	const target = await uniquePath(caseFolder, slugify(title));
 	await vfs.writeFile(target, `# ${title}\n\n`);
+	return target;
+}
+
+/**
+ * Importiert eine hochgeladene Datei (PDF/DOCX/TXT) als Dokument in einen Fall.
+ * Das Original bleibt als Blob erhalten (Mensch sieht es), der extrahierte Text
+ * wird als content gespeichert (der Agent liest ihn). Gibt den VFS-Pfad zurück.
+ */
+export async function uploadDocument(caseFolder: string, file: File): Promise<string> {
+	const { text, mime } = await extractText(file);
+	const dot = file.name.lastIndexOf(".");
+	const slug = slugify(dot > 0 ? file.name.slice(0, dot) : file.name);
+	const ext = dot > 0 ? file.name.slice(dot).toLowerCase() : "";
+	const target = await uniquePath(caseFolder, slug, ext);
+	await vfs.writeFile(target, text, "/", { mime, blob: file });
 	return target;
 }

@@ -275,9 +275,23 @@ const builtins: Record<string, Builtin> = {
 		const pattern = args[0];
 		if (pattern === undefined) return fail("grep: fehlendes Muster\n");
 		const re = new RegExp(pattern, flags.has("i") ? "i" : undefined);
-		const files = args.slice(1);
+		const recursive = flags.has("r") || flags.has("R");
+		const operands = args.slice(1);
 		const matched: string[] = [];
-		const showName = files.length > 1;
+
+		// Bei -r jedes Argument (Verzeichnis oder Datei) zum Dateibaum expandieren.
+		let files = operands;
+		if (recursive) {
+			const targets = operands.length ? operands : [ctx.cwd];
+			files = [];
+			try {
+				for (const t of targets) files.push(...(await vfs.walk(t, ctx.cwd)));
+			} catch (e) {
+				return fail(`grep: ${(e as Error).message}\n`);
+			}
+		}
+
+		const showName = recursive || files.length > 1;
 		const scan = (text: string, label?: string) => {
 			for (const line of text.split("\n")) {
 				if (re.test(line)) matched.push(label ? `${label}:${line}` : line);
@@ -290,6 +304,7 @@ const builtins: Record<string, Builtin> = {
 				try {
 					scan(await vfs.readFile(f, ctx.cwd), showName ? f : undefined);
 				} catch (e) {
+					if (recursive) continue; // Platzhalter/Verzeichnisse überspringen.
 					return fail(`grep: ${f}: ${describeErr(e)}\n`);
 				}
 			}

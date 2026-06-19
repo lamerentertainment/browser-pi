@@ -43,8 +43,18 @@ function tx<T>(
 
 export interface FileRecord {
 	path: string;
+	/**
+	 * Text-Repräsentation. Bei Klartext-Dateien der Inhalt selbst; bei
+	 * Binärdokumenten (PDF/DOCX) der extrahierte, agent-lesbare Text. Die
+	 * Agent-Tools (read/grep/find) lesen ausschliesslich dieses Feld — sie sehen
+	 * nie die Bytes.
+	 */
 	content: string;
 	mtime: number;
+	/** MIME-Typ; fehlt bei reinem Klartext. z.B. "application/pdf". */
+	mime?: string;
+	/** Original-Bytes eines Binärdokuments. IndexedDB speichert Blob nativ. */
+	blob?: Blob;
 }
 
 export const idb = {

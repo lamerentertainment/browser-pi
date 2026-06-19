@@ -13,7 +13,9 @@ import {
 	LIBRARIES,
 	type LibraryId,
 	loadLibrary,
+	uploadDocument,
 } from "../library/library.ts";
+import { ACCEPTED_EXTENSIONS } from "../import/extract.ts";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import Modal from "./Modal.vue";
 
@@ -41,6 +43,44 @@ const creatingBusy = ref(false);
 
 // Lösch-Bestätigung für einen ganzen Fall.
 const deletingCase = ref<LibraryEntry | null>(null);
+
+// Datei-Upload in einen Fall (PDF/DOCX/TXT).
+const fileInput = ref<HTMLInputElement | null>(null);
+const uploadTargetCase = ref<string | null>(null);
+const uploadBusy = ref(false);
+const uploadError = ref<string | null>(null);
+const uploadAccept = ACCEPTED_EXTENSIONS.join(",");
+
+function startUpload(caseEntry: LibraryEntry) {
+	uploadTargetCase.value = caseEntry.path;
+	fileInput.value?.click();
+}
+
+async function onFilesSelected(e: Event) {
+	const input = e.target as HTMLInputElement;
+	const folder = uploadTargetCase.value;
+	const files = input.files ? [...input.files] : [];
+	if (!folder || files.length === 0 || uploadBusy.value) {
+		input.value = "";
+		return;
+	}
+	uploadBusy.value = true;
+	let lastPath = "";
+	try {
+		for (const file of files) {
+			lastPath = await uploadDocument(folder, file);
+		}
+		expandedCases.add(folder);
+		await refresh();
+		if (lastPath) emit("open", lastPath);
+	} catch (err) {
+		uploadError.value = `Datei konnte nicht verarbeitet werden: ${(err as Error).message}`;
+	} finally {
+		uploadBusy.value = false;
+		uploadTargetCase.value = null;
+		input.value = ""; // erlaubt erneutes Hochladen derselben Datei
+	}
+}
 
 async function refresh() {
 	for (const def of LIBRARIES) {
@@ -134,6 +174,14 @@ onMounted(refresh);
 							>
 								＋
 							</button>
+							<button
+								class="row-act"
+								title="Datei hochladen (PDF, DOCX, TXT)"
+								:disabled="uploadBusy"
+								@click="startUpload(entry)"
+							>
+								📎
+							</button>
 							<button class="row-act danger" title="Fall löschen" @click="deletingCase = entry">
 								🗑
 							</button>
@@ -141,7 +189,7 @@ onMounted(refresh);
 						<ul v-if="expandedCases.has(entry.path)" class="docs">
 							<li v-for="doc in entry.documents" :key="doc.path">
 								<button class="entry doc" @click="emit('open', doc.path)">
-									<span class="doc-icon">📄</span>{{ doc.title }}
+									<span class="doc-icon">{{ doc.mime === "application/pdf" ? "📕" : "📄" }}</span>{{ doc.title }}
 								</button>
 							</li>
 						</ul>
@@ -187,6 +235,23 @@ onMounted(refresh);
 			@confirm="confirmDeleteCase"
 			@cancel="deletingCase = null"
 		/>
+
+		<!-- Verstecktes Datei-Input für den Upload in einen Fall. -->
+		<input
+			ref="fileInput"
+			type="file"
+			multiple
+			:accept="uploadAccept"
+			class="file-input"
+			@change="onFilesSelected"
+		/>
+
+		<Modal v-if="uploadError" title="Upload fehlgeschlagen" @close="uploadError = null">
+			<p class="upload-error">{{ uploadError }}</p>
+			<template #footer>
+				<button class="btn primary" @click="uploadError = null">OK</button>
+			</template>
+		</Modal>
 	</div>
 </template>
 
@@ -270,6 +335,8 @@ onMounted(refresh);
 .row-act.danger:hover { color: #f85149; }
 .docs { list-style: none; margin: 0; padding: 0; }
 .docs .entry { padding-left: 40px; color: #adbac7; }
+.file-input { display: none; }
+.upload-error { color: #e6edf3; font-size: 13px; margin: 0; line-height: 1.5; }
 
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field span { color: #8b949e; font-size: 12px; }
