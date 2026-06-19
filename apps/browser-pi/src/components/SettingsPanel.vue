@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import { listModels } from "../agent/llm.ts";
 import { settings } from "../store/settings.ts";
 import { vfs } from "../vfs/vfs.ts";
@@ -8,16 +8,28 @@ import { idb } from "../vfs/idb.ts";
 const emit = defineEmits<{ close: []; changed: [] }>();
 const status = ref("");
 const models = ref<string[]>([]);
+const loadingModels = ref(false);
 
-async function test() {
-	status.value = "Prüfe Endpoint…";
+async function refreshModels() {
+	loadingModels.value = true;
+	status.value = "Lade Modelle…";
 	try {
 		models.value = await listModels(settings);
-		status.value = `OK — ${models.value.length} Modelle erreichbar.`;
+		status.value = `${models.value.length} Modelle erreichbar.`;
+		// Falls das gespeicherte Modell nicht (mehr) angeboten wird, aber Modelle
+		// da sind: erstes Modell vorauswählen, damit kein toter Wert stehen bleibt.
+		if (models.value.length > 0 && !models.value.includes(settings.model)) {
+			settings.model = models.value[0];
+		}
 	} catch (e) {
+		models.value = [];
 		status.value = `Fehler: ${(e as Error).message} (CORS am Endpoint erlaubt?)`;
+	} finally {
+		loadingModels.value = false;
 	}
 }
+
+onMounted(refreshModels);
 
 async function exportVfs() {
 	const data = await vfs.exportAll();
@@ -64,14 +76,20 @@ async function resetVfs() {
 				<input v-model="settings.apiKey" type="password" placeholder="(leer bei Ollama)" />
 			</label>
 			<label>Modell
-				<input v-model="settings.model" list="models" placeholder="llama3.1" />
-				<datalist id="models">
-					<option v-for="m in models" :key="m" :value="m" />
-				</datalist>
+				<select v-if="models.length" v-model="settings.model">
+					<option v-for="m in models" :key="m" :value="m">{{ m }}</option>
+				</select>
+				<input
+					v-else
+					v-model="settings.model"
+					placeholder="llama3.1"
+				/>
 			</label>
 
 			<div class="row">
-				<button @click="test">Verbindung testen</button>
+				<button :disabled="loadingModels" @click="refreshModels">
+					{{ loadingModels ? "Lade…" : "Modelle aktualisieren" }}
+				</button>
 			</div>
 			<p v-if="status" class="status">{{ status }}</p>
 
@@ -115,7 +133,7 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 h3 { font-size: 13px; color: #8b949e; margin: 8px 0; }
 .hint { color: #8b949e; font-size: 12px; margin: 0 0 16px; }
 label { display: block; margin-bottom: 12px; font-size: 12px; color: #8b949e; }
-input {
+input, select {
 	display: block;
 	width: 100%;
 	margin-top: 4px;
@@ -127,6 +145,7 @@ input {
 	font-family: ui-monospace, monospace;
 	box-sizing: border-box;
 }
+button:disabled { opacity: 0.5; cursor: default; }
 .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
 .row.end { justify-content: flex-end; margin-top: 16px; }
 button, .filebtn {
