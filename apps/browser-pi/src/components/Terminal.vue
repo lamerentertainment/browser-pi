@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue";
 import type { AgentEvent } from "../agent/events.ts";
+import { marked } from "marked";
 
 const props = defineProps<{ events: AgentEvent[]; busy: boolean }>();
 const scroller = ref<HTMLElement | null>(null);
@@ -16,6 +17,12 @@ watch(
 function argsPreview(args: Record<string, unknown>): string {
 	const json = JSON.stringify(args);
 	return json.length > 200 ? `${json.slice(0, 200)}…` : json;
+}
+
+function renderMarkdown(text: string, streaming?: boolean): string {
+	if (!text) return "";
+	const content = streaming ? `${text}<span class="blink">▌</span>` : text;
+	return marked.parse(content, { gfm: true, breaks: true }) as string;
 }
 </script>
 
@@ -33,8 +40,7 @@ function argsPreview(args: Record<string, unknown>): string {
 				</details>
 			</template>
 			<template v-else-if="ev.type === 'assistant'">
-				<span class="assistant-text">{{ ev.text
-					}}<span v-if="ev.streaming" class="blink">▌</span></span>
+				<div class="assistant-markdown" v-html="renderMarkdown(ev.text, ev.streaming)"></div>
 			</template>
 			<template v-else-if="ev.type === 'tool_call'">
 				<span class="tool">⚙ {{ ev.name }}</span>
@@ -76,7 +82,94 @@ function argsPreview(args: Record<string, unknown>): string {
 }
 .prompt { color: #7ee787; font-weight: bold; }
 .user-text { color: #e6edf3; }
-.assistant-text { color: #c9d1d9; white-space: pre-wrap; }
+.assistant-markdown {
+	color: #c9d1d9;
+}
+.assistant-markdown :deep(p) {
+	margin-top: 0;
+	margin-bottom: 8px;
+	line-height: 1.6;
+}
+.assistant-markdown :deep(p:last-child) {
+	margin-bottom: 0;
+}
+.assistant-markdown :deep(h1),
+.assistant-markdown :deep(h2),
+.assistant-markdown :deep(h3),
+.assistant-markdown :deep(h4) {
+	margin-top: 16px;
+	margin-bottom: 8px;
+	font-weight: 600;
+	color: #e6edf3;
+}
+.assistant-markdown :deep(h1) { font-size: 1.4em; }
+.assistant-markdown :deep(h2) { font-size: 1.25em; }
+.assistant-markdown :deep(h3) { font-size: 1.1em; }
+.assistant-markdown :deep(*:first-child) {
+	margin-top: 0;
+}
+.assistant-markdown :deep(ul),
+.assistant-markdown :deep(ol) {
+	padding-left: 20px;
+	margin-top: 0;
+	margin-bottom: 8px;
+}
+.assistant-markdown :deep(li) {
+	margin-bottom: 4px;
+}
+.assistant-markdown :deep(code) {
+	background: #161b22;
+	padding: 2px 4px;
+	border-radius: 4px;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 12px;
+	color: #ff7b72;
+}
+.assistant-markdown :deep(pre) {
+	background: #161b22;
+	border: 1px solid #30363d;
+	border-radius: 6px;
+	padding: 12px;
+	margin: 12px 0;
+	overflow-x: auto;
+}
+.assistant-markdown :deep(pre code) {
+	background: none;
+	padding: 0;
+	border-radius: 0;
+	color: #c9d1d9;
+	font-size: 13px;
+}
+.assistant-markdown :deep(blockquote) {
+	border-left: 3px solid #30363d;
+	padding-left: 10px;
+	color: #8b949e;
+	margin: 8px 0;
+	font-style: italic;
+}
+.assistant-markdown :deep(a) {
+	color: #58a6ff;
+	text-decoration: none;
+}
+.assistant-markdown :deep(a:hover) {
+	text-decoration: underline;
+}
+.assistant-markdown :deep(table) {
+	border-collapse: collapse;
+	width: 100%;
+	margin: 12px 0;
+	font-size: 12px;
+}
+.assistant-markdown :deep(th),
+.assistant-markdown :deep(td) {
+	border: 1px solid #30363d;
+	padding: 6px 8px;
+}
+.assistant-markdown :deep(th) {
+	background: #161b22;
+	font-weight: 600;
+	text-align: left;
+}
 .reasoning { color: #8b949e; margin: 2px 0; }
 .reasoning > summary {
 	cursor: pointer;
