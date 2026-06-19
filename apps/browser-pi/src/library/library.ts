@@ -153,10 +153,19 @@ function fileLabel(name: string): string {
 	return `${pretty ? pretty.charAt(0).toUpperCase() + pretty.slice(1) : name}${ext}`;
 }
 
+/**
+ * Das namengebende Leitdokument eines Falls: exakt die Datei „sachverhalt.md".
+ * Bewusst KEINE Pfad-Regex und KEIN Fallback auf documents[0] — sonst kippt der
+ * Fall-Name, sobald man ein Dokument hochlädt, dessen Name „Sachverhalt" enthält
+ * oder das alphabetisch vor das bisherige Leitdokument einsortiert.
+ */
+function leadDocument(documents: LibraryEntry[]): LibraryEntry | undefined {
+	return documents.find((d) => basename(d.path).toLowerCase() === "sachverhalt.md");
+}
+
 /** Fall-Titel aus dem Sachverhalt-Dokument (ohne Untertitel „— Sachverhalt"). */
 function caseTitle(folderName: string, documents: LibraryEntry[]): string {
-	const lead = documents.find((d) => /sachverhalt/i.test(d.path)) ?? documents[0];
-	const title = lead?.title.replace(/\s*—.*$/, "").trim();
+	const title = leadDocument(documents)?.title.replace(/\s*—.*$/, "").trim();
 	return title || prettify(folderName);
 }
 
@@ -243,11 +252,10 @@ export async function saveEntry(path: string, title: string, body: string): Prom
 export async function renameCase(caseFolder: string, newTitle: string): Promise<string> {
 	const title = newTitle.trim();
 	if (!title) return caseFolder;
-	// 1. H1 im Leitdokument anpassen — nur bei Text-Dokumenten (Binär-Importe
-	//    tragen keinen Markdown-Titel, den caseTitle lesen könnte).
+	// 1. H1 im Leitdokument (sachverhalt.md) anpassen — es treibt den Anzeige-Titel.
 	const documents = await loadDocuments(caseFolder);
-	const lead = documents.find((d) => /sachverhalt/i.test(d.path)) ?? documents[0];
-	if (lead && !lead.mime) {
+	const lead = leadDocument(documents);
+	if (lead) {
 		const { body } = parseDoc(await vfs.readFile(lead.path));
 		await vfs.writeFile(lead.path, serializeDoc(title, body));
 	}
