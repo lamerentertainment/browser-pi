@@ -16,7 +16,7 @@ import {
 	renameCase,
 	uploadDocument,
 } from "../library/library.ts";
-import { ACCEPTED_EXTENSIONS } from "../import/extract.ts";
+import { ACCEPTED_EXTENSIONS, isSupported } from "../import/extract.ts";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import Modal from "./Modal.vue";
 
@@ -50,30 +50,33 @@ const renamingCase = ref<LibraryEntry | null>(null);
 const renameTitle = ref("");
 const renamingBusy = ref(false);
 
-// Datei-Upload in einen Fall (PDF/DOCX/TXT).
+// Datei-Upload in einen Fall (PDF/DOCX/TXT) — per Button oder Drag & Drop.
 const fileInput = ref<HTMLInputElement | null>(null);
 const uploadTargetCase = ref<string | null>(null);
 const uploadBusy = ref(false);
 const uploadError = ref<string | null>(null);
 const uploadAccept = ACCEPTED_EXTENSIONS.join(",");
+// Fall-Pfad, über dem gerade eine Datei schwebt (für die Drop-Hervorhebung).
+const dropTargetCase = ref<string | null>(null);
 
 function startUpload(caseEntry: LibraryEntry) {
 	uploadTargetCase.value = caseEntry.path;
 	fileInput.value?.click();
 }
 
-async function onFilesSelected(e: Event) {
-	const input = e.target as HTMLInputElement;
-	const folder = uploadTargetCase.value;
-	const files = input.files ? [...input.files] : [];
-	if (!folder || files.length === 0 || uploadBusy.value) {
-		input.value = "";
+/** Lädt die unterstützten Dateien in einen Fall, öffnet das letzte Dokument. */
+async function uploadFiles(folder: string, files: File[]) {
+	const supported = files.filter((f) => isSupported(f.name));
+	if (supported.length === 0 || uploadBusy.value) {
+		if (files.length > 0 && supported.length === 0) {
+			uploadError.value = `Nur ${ACCEPTED_EXTENSIONS.join(", ")} werden unterstützt.`;
+		}
 		return;
 	}
 	uploadBusy.value = true;
 	let lastPath = "";
 	try {
-		for (const file of files) {
+		for (const file of supported) {
 			lastPath = await uploadDocument(folder, file);
 		}
 		expandedCases.add(folder);
@@ -83,9 +86,36 @@ async function onFilesSelected(e: Event) {
 		uploadError.value = `Datei konnte nicht verarbeitet werden: ${(err as Error).message}`;
 	} finally {
 		uploadBusy.value = false;
-		uploadTargetCase.value = null;
-		input.value = ""; // erlaubt erneutes Hochladen derselben Datei
 	}
+}
+
+async function onFilesSelected(e: Event) {
+	const input = e.target as HTMLInputElement;
+	const folder = uploadTargetCase.value;
+	const files = input.files ? [...input.files] : [];
+	uploadTargetCase.value = null;
+	if (folder) await uploadFiles(folder, files);
+	input.value = ""; // erlaubt erneutes Hochladen derselben Datei
+}
+
+function onCaseDragOver(caseEntry: LibraryEntry, e: DragEvent) {
+	// Nur Datei-Drops annehmen; Drops innerhalb der App ignorieren.
+	if (!e.dataTransfer?.types.includes("Files")) return;
+	e.preventDefault();
+	e.dataTransfer.dropEffect = "copy";
+	dropTargetCase.value = caseEntry.path;
+}
+
+function onCaseDragLeave(caseEntry: LibraryEntry) {
+	if (dropTargetCase.value === caseEntry.path) dropTargetCase.value = null;
+}
+
+async function onCaseDrop(caseEntry: LibraryEntry, e: DragEvent) {
+	dropTargetCase.value = null;
+	const files = e.dataTransfer ? [...e.dataTransfer.files] : [];
+	if (files.length === 0) return;
+	e.preventDefault();
+	await uploadFiles(caseEntry.path, files);
 }
 
 async function refresh() {
@@ -187,8 +217,15 @@ onMounted(refresh);
 				<li v-if="entries[def.id].length === 0" class="empty">Noch nichts vorhanden</li>
 
 				<template v-for="entry in entries[def.id]" :key="entry.path">
-					<!-- Fälle: aufklappbar, mit Dokumenten darunter -->
-					<li v-if="def.nested" class="case">
+					<!-- Fälle: aufklappbar, mit Dokumenten darunter; akzeptieren Datei-Drops -->
+					<li
+						v-if="def.nested"
+						class="case"
+						:class="{ 'drop-target': dropTargetCase === entry.path }"
+						@dragover="onCaseDragOver(entry, $event)"
+						@dragleave="onCaseDragLeave(entry)"
+						@drop="onCaseDrop(entry, $event)"
+					>
 						<div class="case-head">
 							<button class="entry case-row" @click="toggleCase(entry.path)">
 								<span class="caret">{{ expandedCases.has(entry.path) ? "▾" : "▸" }}</span>
@@ -368,6 +405,11 @@ onMounted(refresh);
 }
 .entry:hover { background: #161b22; }
 .doc-icon, .case-icon { font-size: 11px; }
+.case { border-radius: 6px; }
+.case.drop-target {
+	background: #182a14;
+	box-shadow: inset 0 0 0 1px #2ea043;
+}
 .case-head { display: flex; align-items: center; }
 .case-head .case-row { width: auto; flex: 1; min-width: 0; font-weight: 500; }
 .row-act {
