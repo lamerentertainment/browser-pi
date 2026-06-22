@@ -17,6 +17,7 @@ import {
 	uploadDocument,
 } from "../library/library.ts";
 import { ACCEPTED_EXTENSIONS, isSupported } from "../import/extract.ts";
+import { blockedCasePaths, toggleCaseAccess } from "../store/agentAccess.ts";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import Modal from "./Modal.vue";
 
@@ -227,7 +228,11 @@ onMounted(refresh);
 						@drop="onCaseDrop(entry, $event)"
 					>
 						<div class="case-head">
-							<button class="entry case-row" @click="toggleCase(entry.path)">
+							<button
+								class="entry case-row"
+								:class="{ 'agent-blocked': blockedCasePaths.has(entry.path) }"
+								@click="toggleCase(entry.path)"
+							>
 								<span class="caret">{{ expandedCases.has(entry.path) ? "▾" : "▸" }}</span>
 								<span class="case-icon">📁</span>{{ entry.title }}
 							</button>
@@ -248,6 +253,13 @@ onMounted(refresh);
 							</button>
 							<button class="row-act" title="Fall umbenennen" @click="startRename(entry)">
 								✏️
+							</button>
+							<button
+								class="row-act"
+								:title="blockedCasePaths.has(entry.path) ? 'Agent-Zugriff freischalten' : 'Agent-Zugriff sperren'"
+								@click="toggleCaseAccess(entry.path)"
+							>
+								{{ blockedCasePaths.has(entry.path) ? '🔒' : '🔓' }}
 							</button>
 							<button class="row-act danger" title="Fall löschen" @click="deletingCase = entry">
 								🗑
@@ -429,6 +441,7 @@ onMounted(refresh);
 .docs { list-style: none; margin: 0; padding: 0; }
 .docs .entry { padding-left: 40px; color: #adbac7; }
 .file-input { display: none; }
+.agent-blocked { opacity: 0.5; }
 .upload-error { color: #e6edf3; font-size: 13px; margin: 0; line-height: 1.5; }
 
 .field { display: flex; flex-direction: column; gap: 6px; }

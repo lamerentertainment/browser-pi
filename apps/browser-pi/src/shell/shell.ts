@@ -6,6 +6,7 @@
 // Whitelist werden mit "command not found" abgewiesen.
 
 import { basename, type DirEntry, normalizePath, vfs, VfsError } from "../vfs/vfs.ts";
+import { isPathBlocked } from "../store/agentAccess.ts";
 
 export interface ShellResult {
 	stdout: string;
@@ -206,7 +207,11 @@ const builtins: Record<string, Builtin> = {
 		};
 
 		const renderDir = async (norm: string): Promise<void> => {
-			const entries = await listDir(norm);
+			if (isPathBlocked(norm)) {
+				errs.push(`ls: ${norm}: Zugriff verweigert`);
+				return;
+			}
+			const entries = (await listDir(norm)).filter((e) => !isPathBlocked(e.path));
 			if (showHeaders) out.push(`${norm}:`);
 			for (const e of entries) out.push(formatEntry(e));
 			if (showHeaders) out.push("");
@@ -245,6 +250,7 @@ const builtins: Record<string, Builtin> = {
 		if (args.length === 0) return fail("cat: fehlender Operand\n");
 		let out = "";
 		for (const f of args) {
+			if (isPathBlocked(f, ctx.cwd)) return fail(`cat: ${f}: Zugriff verweigert\n`);
 			try {
 				out += await vfs.readFile(f, ctx.cwd);
 			} catch (e) {
@@ -259,8 +265,9 @@ const builtins: Record<string, Builtin> = {
 		const start = argv[1] && !argv[1].startsWith("-") ? argv[1] : ctx.cwd;
 		const nameIdx = argv.indexOf("-name");
 		const pattern = nameIdx !== -1 ? argv[nameIdx + 1] : undefined;
+		if (isPathBlocked(start, ctx.cwd)) return fail(`find: ${start}: Zugriff verweigert\n`);
 		try {
-			const all = await vfs.walk(start, ctx.cwd);
+			const all = (await vfs.walk(start, ctx.cwd)).filter((p) => !isPathBlocked(p));
 			const matches = pattern
 				? all.filter((p) => globToRegex(pattern).test(basename(p)))
 				: all;
@@ -280,12 +287,15 @@ const builtins: Record<string, Builtin> = {
 		const matched: string[] = [];
 
 		// Bei -r jedes Argument (Verzeichnis oder Datei) zum Dateibaum expandieren.
-		let files = operands;
+		let files = operands.filter((f) => !isPathBlocked(f, ctx.cwd));
 		if (recursive) {
 			const targets = operands.length ? operands : [ctx.cwd];
 			files = [];
 			try {
-				for (const t of targets) files.push(...(await vfs.walk(t, ctx.cwd)));
+				for (const t of targets) {
+					if (isPathBlocked(t, ctx.cwd)) continue;
+					files.push(...(await vfs.walk(t, ctx.cwd)).filter((p) => !isPathBlocked(p)));
+				}
 			} catch (e) {
 				return fail(`grep: ${(e as Error).message}\n`);
 			}
@@ -327,6 +337,7 @@ const builtins: Record<string, Builtin> = {
 		const { args } = parseFlags(argv);
 		const target = args[0];
 		if (!target) return fail("write: fehlender Pfad\n");
+		if (isPathBlocked(target, ctx.cwd)) return fail(`write: ${target}: Zugriff verweigert\n`);
 		const content = args.length > 1 ? args.slice(1).join(" ") : stdin;
 		try {
 			const p = await vfs.writeFile(target, content, ctx.cwd);
@@ -341,6 +352,7 @@ const builtins: Record<string, Builtin> = {
 		if (args.length === 0) return fail("rm: fehlender Operand\n");
 		let n = 0;
 		for (const f of args) {
+			if (isPathBlocked(f, ctx.cwd)) return fail(`rm: ${f}: Zugriff verweigert\n`);
 			try {
 				n += await vfs.delete(f, ctx.cwd);
 			} catch (e) {
@@ -352,6 +364,7 @@ const builtins: Record<string, Builtin> = {
 
 	wc: async (argv, stdin, ctx) => {
 		const { flags, args } = parseFlags(argv);
+		if (args[0] && isPathBlocked(args[0], ctx.cwd)) return fail(`wc: ${args[0]}: Zugriff verweigert\n`);
 		const text = args[0] ? await vfs.readFile(args[0], ctx.cwd).catch(() => "") : stdin;
 		const lines = text === "" ? 0 : text.split("\n").length;
 		const words = text.trim() === "" ? 0 : text.trim().split(/\s+/).length;
@@ -364,6 +377,7 @@ const builtins: Record<string, Builtin> = {
 	head: async (argv, stdin, ctx) => {
 		const { flags, args } = parseFlags(argv);
 		const n = flags.has("n") ? 10 : 10;
+		if (args[0] && isPathBlocked(args[0], ctx.cwd)) return fail(`head: ${args[0]}: Zugriff verweigert\n`);
 		const text = args[0] ? await vfs.readFile(args[0], ctx.cwd).catch(() => stdin) : stdin;
 		return ok(`${text.split("\n").slice(0, n).join("\n")}\n`);
 	},
@@ -414,6 +428,9 @@ async function runPipeline(stages: ParsedCommand[], ctx: ShellContext): Promise<
 		last = await builtin(stage.argv, stdin, ctx);
 		// Redirect der letzten Stufe in eine VFS-Datei.
 		if (stage.redirect) {
+			if (isPathBlocked(stage.redirect.target, ctx.cwd)) {
+				return fail(`redirect: ${stage.redirect.target}: Zugriff verweigert\n`);
+			}
 			try {
 				const prev =
 					stage.redirect.mode === "append"
