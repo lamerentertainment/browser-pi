@@ -1,7 +1,6 @@
-// Built-in Slash-Commands für die Eingabezeile. Bewusst NUR App-Befehle
-// (keine Prompt-Vorlagen): sie steuern Sitzung und UI, nicht den Agenten.
-// Anfänger-tauglich: deutsche Namen, jede Zeile mit Klartext-Beschreibung
-// (CLAUDE.md, "Zielgruppe & Bedienkonzept").
+// Slash-Commands und Prompt-Bibliothek für die Eingabezeile.
+// Built-in Commands steuern Sitzung und UI; Prompt-Einträge werden per Slash
+// aus der Bibliothek eingefügt (CLAUDE.md, "Zielgruppe & Bedienkonzept").
 
 export type SlashCommandName =
 	| "neu"
@@ -14,6 +13,19 @@ export interface SlashCommand {
 	name: SlashCommandName;
 	description: string;
 }
+
+/** Ein gespeicherter Prompt aus der Bibliothek, abrufbar per Slash-Command. */
+export interface PromptEntry {
+	kind: "prompt";
+	title: string;
+	/** VFS-Pfad zur Prompt-Datei. */
+	path: string;
+}
+
+/** Eintrag in der Autovervollständigungs-Palette: eingebaut oder Prompt. */
+export type PaletteEntry =
+	| { kind: "command"; name: SlashCommandName; description: string }
+	| PromptEntry;
 
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
 	{ name: "neu", description: "Neue Sitzung beginnen (Verlauf verwerfen)" },
@@ -29,11 +41,31 @@ export function isSlashInput(input: string): boolean {
 }
 
 /**
- * Liefert die zur Eingabe passenden Befehle für die Autovervollständigung.
- * - Gibt `null` zurück, wenn die Eingabe kein '/'-Befehl ist (Palette bleibt zu).
- * - Gibt `null` zurück, sobald ein Leerzeichen folgt ("/neu " = fertig getippt).
- * - Filtert nach Präfix des Namens oder Vorkommen in der Beschreibung.
+ * Liefert alle passenden Palette-Einträge (built-in Commands + Prompts).
+ * - `null` wenn kein '/'-Präfix oder bereits ein Leerzeichen folgt.
+ * - Built-in Commands zuerst, danach gefilterte Prompt-Einträge.
  */
+export function matchPaletteEntries(
+	input: string,
+	prompts: PromptEntry[],
+): PaletteEntry[] | null {
+	if (!isSlashInput(input)) return null;
+	if (/\s/.test(input)) return null;
+	const query = input.slice(1).toLowerCase();
+	const cmds: PaletteEntry[] = SLASH_COMMANDS
+		.filter(
+			(c) =>
+				c.name.startsWith(query) ||
+				c.description.toLowerCase().includes(query),
+		)
+		.map((c) => ({ kind: "command" as const, name: c.name, description: c.description }));
+	const ps: PaletteEntry[] = prompts.filter((p) =>
+		query === "" || p.title.toLowerCase().includes(query),
+	);
+	return [...cmds, ...ps];
+}
+
+/** @deprecated Verwende matchPaletteEntries. Nur noch intern genutzt. */
 export function matchSlashCommands(input: string): SlashCommand[] | null {
 	if (!isSlashInput(input)) return null;
 	if (/\s/.test(input)) return null;

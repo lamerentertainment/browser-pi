@@ -28,9 +28,9 @@ export interface LibraryDef {
 export const LIBRARIES: LibraryDef[] = [
 	{
 		id: "prompts",
-		label: "Vorlagen",
-		newLabel: "Neue Vorlage",
-		newField: "Titel der Vorlage",
+		label: "Prompts",
+		newLabel: "Neuer Prompt",
+		newField: "Titel des Prompts",
 		prefix: "/prompts",
 		nested: false,
 		template: (t) => `# ${t}\n\n`,

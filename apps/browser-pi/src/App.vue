@@ -4,13 +4,18 @@ import type { AgentEvent } from "./agent/events.ts";
 import {
 	SLASH_COMMANDS,
 	type SlashCommand,
-	matchSlashCommands,
+	type PaletteEntry,
+	type PromptEntry,
+	matchPaletteEntries,
 	resolveSlashCommand,
 } from "./agent/commands.ts";
+import { loadLibrary, LIBRARIES } from "./library/library.ts";
+import { vfs } from "./vfs/vfs.ts";
 import { PiAgentSession } from "./agent/piSession.ts";
 import { settings } from "./store/settings.ts";
 import { requestPersistence } from "./vfs/idb.ts";
 import { seedIfNeeded } from "./vfs/seed.ts";
+import { devSeedIfNeeded } from "./vfs/dev-seed.ts";
 import Terminal from "./components/Terminal.vue";
 import CommandPalette from "./components/CommandPalette.vue";
 import LibrarySidebar from "./components/LibrarySidebar.vue";
@@ -57,13 +62,27 @@ function startResize(e: PointerEvent): void {
 
 const session = shallowRef<PiAgentSession | null>(null);
 
+// --- Prompt-Bibliothek (für Slash-Autovervollständigung) --------------------
+const promptEntries = ref<PromptEntry[]>([]);
+
+async function loadPrompts(): Promise<void> {
+	const def = LIBRARIES.find((l) => l.id === "prompts");
+	if (!def) return;
+	const entries = await loadLibrary(def);
+	promptEntries.value = entries.map((e) => ({
+		kind: "prompt" as const,
+		title: e.title,
+		path: e.path,
+	}));
+}
+
 // --- Slash-Command-Palette --------------------------------------------------
 const paletteIndex = ref(0);
 const paletteDismissed = ref(false); // Esc schliesst sie bis zur nächsten Eingabe.
 
 const paletteCommands = computed(() => {
 	if (busy.value || paletteDismissed.value) return null;
-	return matchSlashCommands(input.value);
+	return matchPaletteEntries(input.value, promptEntries.value);
 });
 
 // Jede Tastatureingabe setzt Auswahl zurück und hebt ein vorheriges Esc auf.
@@ -88,7 +107,10 @@ function onAgentEvent(ev: AgentEvent): void {
 	events.value = coalesce
 		? [...events.value.slice(0, -1), ev]
 		: [...events.value, ev];
-	if (ev.type === "tool_result") explorer.value?.refresh();
+	if (ev.type === "tool_result") {
+		explorer.value?.refresh();
+		loadPrompts();
+	}
 }
 
 function createSession(): void {
@@ -97,7 +119,9 @@ function createSession(): void {
 
 onMounted(async () => {
 	await seedIfNeeded();
+	await devSeedIfNeeded();
 	await requestPersistence();
+	await loadPrompts();
 	createSession();
 });
 
@@ -115,7 +139,7 @@ async function submit() {
 	if (resolved) {
 		if ("unknown" in resolved) {
 			input.value = "";
-			pushStatus(`Unbekannter Befehl: /${resolved.unknown} — „/hilfe“ zeigt alle Befehle.`);
+			pushStatus(`Unbekannter Befehl: /${resolved.unknown} — „/hilfe" zeigt alle Befehle.`);
 		} else {
 			runCommand(resolved);
 		}
@@ -128,13 +152,26 @@ async function submit() {
 	await session.value.send(text);
 	busy.value = false;
 	explorer.value?.refresh();
+	loadPrompts();
 }
 
-// --- Befehlsausführung ------------------------------------------------------
-function acceptCommand(cmd: SlashCommand | string): void {
-	const c =
-		typeof cmd === "string" ? SLASH_COMMANDS.find((x) => x.name === cmd) : cmd;
-	if (c) runCommand(c);
+// --- Palette-Auswahl --------------------------------------------------------
+async function acceptPaletteEntry(entry: PaletteEntry): Promise<void> {
+	paletteDismissed.value = true;
+	if (entry.kind === "command") {
+		const cmd = SLASH_COMMANDS.find((c) => c.name === entry.name);
+		if (cmd) runCommand(cmd);
+	} else {
+		await insertPrompt(entry);
+	}
+}
+
+async function insertPrompt(entry: PromptEntry): Promise<void> {
+	const content = await vfs.readFile(entry.path);
+	// H1-Zeile entfernen — der Titel ist schon bekannt; der Nutzer sieht den Rumpf.
+	const body = content.replace(/^\s*#[^\n]*\n+/, "").trimStart();
+	input.value = body || content;
+	paletteDismissed.value = true;
 }
 
 function runCommand(cmd: SlashCommand): void {
@@ -208,6 +245,7 @@ function exportTranscript(): void {
 function onInputKeydown(e: KeyboardEvent): void {
 	const cmds = paletteCommands.value;
 	if (!cmds || cmds.length === 0) return;
+	const active = cmds[paletteIndex.value];
 	switch (e.key) {
 		case "ArrowDown":
 			e.preventDefault();
@@ -219,11 +257,17 @@ function onInputKeydown(e: KeyboardEvent): void {
 			break;
 		case "Enter":
 			e.preventDefault();
-			acceptCommand(cmds[paletteIndex.value]);
+			if (active) acceptPaletteEntry(active);
 			break;
 		case "Tab":
 			e.preventDefault();
-			input.value = `/${cmds[paletteIndex.value].name}`;
+			if (active) {
+				if (active.kind === "command") {
+					input.value = `/${active.name}`;
+				} else {
+					insertPrompt(active);
+				}
+			}
 			break;
 		case "Escape":
 			e.preventDefault();
@@ -244,6 +288,7 @@ function openFile(path: string) {
 function onEditorClosed() {
 	editingPath.value = null;
 	explorer.value?.refresh();
+	loadPrompts();
 }
 </script>
 
@@ -276,14 +321,14 @@ function onEditorClosed() {
 						v-if="paletteCommands && paletteCommands.length"
 						:commands="paletteCommands"
 						:active-index="paletteIndex"
-						@select="acceptCommand"
+						@select="acceptPaletteEntry"
 						@hover="paletteIndex = $event"
 					/>
 					<span class="prompt">›</span>
 					<input
 						v-model="input"
 						:disabled="busy"
-						placeholder="Aufgabe stellen – z.B. „Fasse diesen Fall zusammen“ · „/“ für Befehle"
+						placeholder="Aufgabe stellen – z.B. Fasse diesen Fall zusammen / für Befehle"
 						autofocus
 						@keydown="onInputKeydown"
 					/>

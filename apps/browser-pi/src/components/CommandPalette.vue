@@ -1,28 +1,34 @@
 <script setup lang="ts">
-// Autovervollständigungs-Menü über der Eingabezeile. Reine Darstellung:
-// Navigation (Tasten) und Ausführung liegen in App.vue. `mousedown.prevent`
-// statt `click`, damit der Fokus in der Eingabe bleibt (kein Blur vor Auswahl).
-import type { SlashCommand } from "../agent/commands.ts";
+// Autovervollständigungs-Menü über der Eingabezeile. Zeigt built-in Commands
+// und Prompt-Bibliotheks-Einträge gemeinsam an. Reine Darstellung: Navigation
+// und Ausführung liegen in App.vue. `mousedown.prevent` hält Fokus in der Eingabe.
+import type { PaletteEntry } from "../agent/commands.ts";
 
-defineProps<{ commands: SlashCommand[]; activeIndex: number }>();
-const emit = defineEmits<{ select: [name: string]; hover: [index: number] }>();
+defineProps<{ commands: PaletteEntry[]; activeIndex: number }>();
+const emit = defineEmits<{ select: [entry: PaletteEntry]; hover: [index: number] }>();
 </script>
 
 <template>
 	<div class="palette" role="listbox">
-		<div class="hdr">Befehle — ↑↓ wählen, ⏎ ausführen, Esc schliessen</div>
+		<div class="hdr">↑↓ wählen · ⏎ einfügen · Tab vervollständigen · Esc schliessen</div>
 		<div
-			v-for="(cmd, i) in commands"
-			:key="cmd.name"
+			v-for="(entry, i) in commands"
+			:key="entry.kind === 'command' ? entry.name : entry.path"
 			class="item"
 			:class="{ active: i === activeIndex }"
 			role="option"
 			:aria-selected="i === activeIndex"
-			@mousedown.prevent="emit('select', cmd.name)"
+			@mousedown.prevent="emit('select', entry)"
 			@mouseenter="emit('hover', i)"
 		>
-			<span class="name">/{{ cmd.name }}</span>
-			<span class="desc">{{ cmd.description }}</span>
+			<template v-if="entry.kind === 'command'">
+				<span class="name cmd">/{{ entry.name }}</span>
+				<span class="desc">{{ entry.description }}</span>
+			</template>
+			<template v-else>
+				<span class="name prompt">📋 {{ entry.title }}</span>
+				<span class="desc">Prompt einfügen</span>
+			</template>
 		</div>
 	</div>
 </template>
@@ -57,10 +63,14 @@ const emit = defineEmits<{ select: [name: string]; hover: [index: number] }>();
 }
 .item.active { background: #161b22; }
 .name {
-	color: #7ee787;
 	font-family: ui-monospace, monospace;
 	font-size: 13px;
-	min-width: 130px;
+	min-width: 160px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
+.name.cmd { color: #7ee787; }
+.name.prompt { color: #79c0ff; }
 .desc { color: #8b949e; font-size: 12px; }
 </style>
