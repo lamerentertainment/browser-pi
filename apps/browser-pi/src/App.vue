@@ -170,7 +170,16 @@ async function insertPrompt(entry: PromptEntry): Promise<void> {
 	const content = await vfs.readFile(entry.path);
 	// H1-Zeile entfernen — der Titel ist schon bekannt; der Nutzer sieht den Rumpf.
 	const body = content.replace(/^\s*#[^\n]*\n+/, "").trimStart();
-	input.value = body || content;
+	let text = body || content;
+	if (text.includes("{{zwischenablage}}")) {
+		try {
+			const clipboard = await navigator.clipboard.readText();
+			text = text.replaceAll("{{zwischenablage}}", clipboard);
+		} catch {
+			// Clipboard-Zugriff verweigert — Platzhalter bleibt stehen.
+		}
+	}
+	input.value = text;
 	paletteDismissed.value = true;
 }
 
