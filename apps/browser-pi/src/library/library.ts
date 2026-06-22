@@ -4,7 +4,7 @@
 // "Zielgruppe & Bedienkonzept"). Die Pfade bleiben reines Implementierungsdetail
 // — derselbe Namensraum, auf dem der Agent mit seinen Tools arbeitet.
 
-import { extractText } from "../import/extract.ts";
+import { extractDocxBlob, extractText, DOCX_MIME } from "../import/extract.ts";
 import { basename, dirname, vfs } from "../vfs/vfs.ts";
 
 export type LibraryId = "prompts" | "textblocks" | "cases";
@@ -293,6 +293,16 @@ export async function createDocument(caseFolder: string, title: string): Promise
 	const target = await uniquePath(caseFolder, slugify(title));
 	await vfs.writeFile(target, `# ${title}\n\n`);
 	return target;
+}
+
+/**
+ * Speichert ein per SuperDoc bearbeitetes DOCX zurück ins VFS. Aktualisiert
+ * sowohl den Blob (Original bleibt erhalten) als auch den extrahierten Text
+ * (agent-lesbarer Index). Gibt den unveränderten Pfad zurück.
+ */
+export async function saveDocxBlob(path: string, blob: Blob): Promise<void> {
+	const text = await extractDocxBlob(blob);
+	await vfs.writeFile(path, text, "/", { mime: DOCX_MIME, blob });
 }
 
 /**

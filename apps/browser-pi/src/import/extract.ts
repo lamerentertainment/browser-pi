@@ -22,6 +22,7 @@ export interface ExtractResult {
 }
 
 export const ACCEPTED_EXTENSIONS = [".pdf", ".docx", ".txt"] as const;
+export const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 /** Prüft anhand der Endung, ob eine Datei unterstützt wird. */
 export function isSupported(name: string): boolean {
@@ -46,10 +47,7 @@ export async function extractText(file: File): Promise<ExtractResult> {
 		return { text: await extractPdf(file), mime: "application/pdf" };
 	}
 	if (name.endsWith(".docx")) {
-		return {
-			text: await extractDocx(file),
-			mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-		};
+		return { text: await extractDocxBlob(file), mime: DOCX_MIME };
 	}
 	if (name.endsWith(".txt")) {
 		return { text: await file.text(), mime: "text/plain" };
@@ -83,8 +81,13 @@ async function extractPdf(file: File): Promise<string> {
  * öffentliche `convertToHtml`-API gehen und Seitenumbrüche per StyleMap auf `<hr>`
  * mappen, dann das HTML zu Klartext wandeln und an den `<hr>` Seitenmarker setzen.
  */
-async function extractDocx(file: File): Promise<string> {
-	const arrayBuffer = await file.arrayBuffer();
+/**
+ * Extrahiert Klartext aus einem DOCX-Blob (für den Agenten lesbar).
+ * Wird auch beim Speichern über SuperDoc aufgerufen, um den agent-lesbaren
+ * Text-Index aktuell zu halten.
+ */
+export async function extractDocxBlob(blob: Blob): Promise<string> {
+	const arrayBuffer = await blob.arrayBuffer();
 	const { value: html } = await mammoth.convertToHtml(
 		{ arrayBuffer },
 		{ styleMap: ["br[type='page'] => hr"] },
