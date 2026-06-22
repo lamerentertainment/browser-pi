@@ -3,8 +3,11 @@ import { nextTick, ref, watch } from "vue";
 import type { AgentEvent } from "../agent/events.ts";
 import { marked } from "marked";
 
+const COLLAPSED_LINES = 10;
+
 const props = defineProps<{ events: AgentEvent[]; busy: boolean }>();
 const scroller = ref<HTMLElement | null>(null);
+const expanded = ref(new Set<number>());
 
 watch(
 	() => props.events.length,
@@ -13,6 +16,25 @@ watch(
 		if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight;
 	},
 );
+
+function toggleExpand(i: number): void {
+	const s = new Set(expanded.value);
+	if (s.has(i)) s.delete(i);
+	else s.add(i);
+	expanded.value = s;
+}
+
+function toolResultDisplay(output: string, i: number): { text: string; hiddenLines: number } {
+	const lines = output.split("\n");
+	const isExpanded = expanded.value.has(i);
+	if (isExpanded || lines.length <= COLLAPSED_LINES) {
+		return { text: output, hiddenLines: 0 };
+	}
+	return {
+		text: lines.slice(0, COLLAPSED_LINES).join("\n"),
+		hiddenLines: lines.length - COLLAPSED_LINES,
+	};
+}
 
 function argsPreview(args: Record<string, unknown>): string {
 	const json = JSON.stringify(args);
@@ -47,7 +69,12 @@ function renderMarkdown(text: string, streaming?: boolean): string {
 				<span class="tool-args">{{ argsPreview(ev.args) }}</span>
 			</template>
 			<template v-else-if="ev.type === 'tool_result'">
-				<pre class="tool-result" :class="{ err: ev.exitCode !== 0 }">{{ ev.output }}</pre>
+				<pre class="tool-result" :class="{ err: ev.exitCode !== 0 }">{{ toolResultDisplay(ev.output, i).text }}</pre>
+				<button
+					v-if="toolResultDisplay(ev.output, i).hiddenLines > 0 || expanded.has(i)"
+					class="expand-btn"
+					@click="toggleExpand(i)"
+				>{{ expanded.has(i) ? "▲ Weniger anzeigen" : `▼ … ${toolResultDisplay(ev.output, i).hiddenLines} weitere Zeilen` }}</button>
 			</template>
 			<template v-else-if="ev.type === 'error'">
 				<span class="error-text">✗ {{ ev.text }}</span>
@@ -193,16 +220,31 @@ function renderMarkdown(text: string, streaming?: boolean): string {
 .tool { color: #79c0ff; font-weight: bold; margin-right: 8px; }
 .tool-args { color: #6e7681; }
 .tool-result {
-	margin: 2px 0 6px 0;
+	margin: 2px 0 0 0;
 	padding: 6px 10px;
 	background: #11151c;
 	border-left: 2px solid #30363d;
 	color: #8b949e;
-	max-height: 220px;
-	overflow: auto;
+	overflow-x: auto;
 	white-space: pre-wrap;
+	word-break: break-all;
 }
 .tool-result.err { border-left-color: #f85149; color: #ffa198; }
+.expand-btn {
+	display: block;
+	margin: 0 0 6px 0;
+	padding: 2px 10px;
+	background: none;
+	border: none;
+	border-left: 2px solid #30363d;
+	color: #58a6ff;
+	font-family: inherit;
+	font-size: 11px;
+	cursor: pointer;
+	text-align: left;
+	width: 100%;
+}
+.expand-btn:hover { background: #161b22; }
 .error-text { color: #f85149; }
 .status-text { color: #6e7681; font-style: italic; }
 .empty { color: #6e7681; font-style: italic; padding-top: 8px; }
