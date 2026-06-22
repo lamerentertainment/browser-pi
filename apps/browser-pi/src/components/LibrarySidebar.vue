@@ -13,7 +13,11 @@ import {
 	LIBRARIES,
 	type LibraryId,
 	loadLibrary,
+	renameCase,
+	uploadDocument,
 } from "../library/library.ts";
+import { ACCEPTED_EXTENSIONS, isSupported } from "../import/extract.ts";
+import { blockedCasePaths, toggleCaseAccess } from "../store/agentAccess.ts";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import Modal from "./Modal.vue";
 
@@ -25,8 +29,8 @@ const entries = reactive<Record<LibraryId, LibraryEntry[]>>({
 	cases: [],
 });
 const openSections = reactive<Record<LibraryId, boolean>>({
-	prompts: true,
-	textblocks: true,
+	prompts: false,
+	textblocks: false,
 	cases: true,
 });
 const expandedCases = reactive<Set<string>>(new Set());
@@ -41,6 +45,79 @@ const creatingBusy = ref(false);
 
 // Lösch-Bestätigung für einen ganzen Fall.
 const deletingCase = ref<LibraryEntry | null>(null);
+
+// Umbenennen eines ganzen Falls.
+const renamingCase = ref<LibraryEntry | null>(null);
+const renameTitle = ref("");
+const renamingBusy = ref(false);
+
+// Datei-Upload in einen Fall (PDF/DOCX/TXT) — per Button oder Drag & Drop.
+const fileInput = ref<HTMLInputElement | null>(null);
+const uploadTargetCase = ref<string | null>(null);
+const uploadBusy = ref(false);
+const uploadError = ref<string | null>(null);
+const uploadAccept = ACCEPTED_EXTENSIONS.join(",");
+// Fall-Pfad, über dem gerade eine Datei schwebt (für die Drop-Hervorhebung).
+const dropTargetCase = ref<string | null>(null);
+
+function startUpload(caseEntry: LibraryEntry) {
+	uploadTargetCase.value = caseEntry.path;
+	fileInput.value?.click();
+}
+
+/** Lädt die unterstützten Dateien in einen Fall, öffnet das letzte Dokument. */
+async function uploadFiles(folder: string, files: File[]) {
+	const supported = files.filter((f) => isSupported(f.name));
+	if (supported.length === 0 || uploadBusy.value) {
+		if (files.length > 0 && supported.length === 0) {
+			uploadError.value = `Nur ${ACCEPTED_EXTENSIONS.join(", ")} werden unterstützt.`;
+		}
+		return;
+	}
+	uploadBusy.value = true;
+	let lastPath = "";
+	try {
+		for (const file of supported) {
+			lastPath = await uploadDocument(folder, file);
+		}
+		expandedCases.add(folder);
+		await refresh();
+		if (lastPath) emit("open", lastPath);
+	} catch (err) {
+		uploadError.value = `Datei konnte nicht verarbeitet werden: ${(err as Error).message}`;
+	} finally {
+		uploadBusy.value = false;
+	}
+}
+
+async function onFilesSelected(e: Event) {
+	const input = e.target as HTMLInputElement;
+	const folder = uploadTargetCase.value;
+	const files = input.files ? [...input.files] : [];
+	uploadTargetCase.value = null;
+	if (folder) await uploadFiles(folder, files);
+	input.value = ""; // erlaubt erneutes Hochladen derselben Datei
+}
+
+function onCaseDragOver(caseEntry: LibraryEntry, e: DragEvent) {
+	// Nur Datei-Drops annehmen; Drops innerhalb der App ignorieren.
+	if (!e.dataTransfer?.types.includes("Files")) return;
+	e.preventDefault();
+	e.dataTransfer.dropEffect = "copy";
+	dropTargetCase.value = caseEntry.path;
+}
+
+function onCaseDragLeave(caseEntry: LibraryEntry) {
+	if (dropTargetCase.value === caseEntry.path) dropTargetCase.value = null;
+}
+
+async function onCaseDrop(caseEntry: LibraryEntry, e: DragEvent) {
+	dropTargetCase.value = null;
+	const files = e.dataTransfer ? [...e.dataTransfer.files] : [];
+	if (files.length === 0) return;
+	e.preventDefault();
+	await uploadFiles(caseEntry.path, files);
+}
 
 async function refresh() {
 	for (const def of LIBRARIES) {
@@ -92,6 +169,27 @@ async function confirmCreate() {
 	}
 }
 
+function startRename(caseEntry: LibraryEntry) {
+	renamingCase.value = caseEntry;
+	renameTitle.value = caseEntry.title;
+}
+
+async function confirmRename() {
+	const target = renamingCase.value;
+	const title = renameTitle.value.trim();
+	if (!target || !title || renamingBusy.value) return;
+	renamingBusy.value = true;
+	try {
+		const newPath = await renameCase(target.path, title);
+		// Aufklapp-Zustand auf den (ggf. neuen) Pfad übertragen.
+		if (expandedCases.delete(target.path)) expandedCases.add(newPath);
+		renamingCase.value = null;
+		await refresh();
+	} finally {
+		renamingBusy.value = false;
+	}
+}
+
 async function confirmDeleteCase() {
 	const target = deletingCase.value;
 	if (!target) return;
@@ -120,10 +218,21 @@ onMounted(refresh);
 				<li v-if="entries[def.id].length === 0" class="empty">Noch nichts vorhanden</li>
 
 				<template v-for="entry in entries[def.id]" :key="entry.path">
-					<!-- Fälle: aufklappbar, mit Dokumenten darunter -->
-					<li v-if="def.nested" class="case">
+					<!-- Fälle: aufklappbar, mit Dokumenten darunter; akzeptieren Datei-Drops -->
+					<li
+						v-if="def.nested"
+						class="case"
+						:class="{ 'drop-target': dropTargetCase === entry.path }"
+						@dragover="onCaseDragOver(entry, $event)"
+						@dragleave="onCaseDragLeave(entry)"
+						@drop="onCaseDrop(entry, $event)"
+					>
 						<div class="case-head">
-							<button class="entry case-row" @click="toggleCase(entry.path)">
+							<button
+								class="entry case-row"
+								:class="{ 'agent-blocked': blockedCasePaths.has(entry.path) }"
+								@click="toggleCase(entry.path)"
+							>
 								<span class="caret">{{ expandedCases.has(entry.path) ? "▾" : "▸" }}</span>
 								<span class="case-icon">📁</span>{{ entry.title }}
 							</button>
@@ -134,6 +243,24 @@ onMounted(refresh);
 							>
 								＋
 							</button>
+							<button
+								class="row-act"
+								title="Datei hochladen (PDF, DOCX, TXT)"
+								:disabled="uploadBusy"
+								@click="startUpload(entry)"
+							>
+								📎
+							</button>
+							<button class="row-act" title="Fall umbenennen" @click="startRename(entry)">
+								✏️
+							</button>
+							<button
+								class="row-act"
+								:title="blockedCasePaths.has(entry.path) ? 'Agent-Zugriff freischalten' : 'Agent-Zugriff sperren'"
+								@click="toggleCaseAccess(entry.path)"
+							>
+								{{ blockedCasePaths.has(entry.path) ? '🔒' : '🔓' }}
+							</button>
 							<button class="row-act danger" title="Fall löschen" @click="deletingCase = entry">
 								🗑
 							</button>
@@ -141,7 +268,7 @@ onMounted(refresh);
 						<ul v-if="expandedCases.has(entry.path)" class="docs">
 							<li v-for="doc in entry.documents" :key="doc.path">
 								<button class="entry doc" @click="emit('open', doc.path)">
-									<span class="doc-icon">📄</span>{{ doc.title }}
+									<span class="doc-icon">{{ doc.mime === "application/pdf" ? "📕" : "📄" }}</span>{{ doc.title }}
 								</button>
 							</li>
 						</ul>
@@ -178,6 +305,27 @@ onMounted(refresh);
 			</template>
 		</Modal>
 
+		<Modal v-if="renamingCase" title="Fall umbenennen" @close="renamingCase = null">
+			<label class="field">
+				<span>Name des Falls</span>
+				<input
+					v-model="renameTitle"
+					autofocus
+					@keydown.enter.prevent="confirmRename"
+				/>
+			</label>
+			<template #footer>
+				<button class="btn ghost" @click="renamingCase = null">Abbrechen</button>
+				<button
+					class="btn primary"
+					:disabled="!renameTitle.trim() || renamingBusy"
+					@click="confirmRename"
+				>
+					Umbenennen
+				</button>
+			</template>
+		</Modal>
+
 		<ConfirmDialog
 			v-if="deletingCase"
 			title="Fall löschen"
@@ -187,6 +335,23 @@ onMounted(refresh);
 			@confirm="confirmDeleteCase"
 			@cancel="deletingCase = null"
 		/>
+
+		<!-- Verstecktes Datei-Input für den Upload in einen Fall. -->
+		<input
+			ref="fileInput"
+			type="file"
+			multiple
+			:accept="uploadAccept"
+			class="file-input"
+			@change="onFilesSelected"
+		/>
+
+		<Modal v-if="uploadError" title="Upload fehlgeschlagen" @close="uploadError = null">
+			<p class="upload-error">{{ uploadError }}</p>
+			<template #footer>
+				<button class="btn primary" @click="uploadError = null">OK</button>
+			</template>
+		</Modal>
 	</div>
 </template>
 
@@ -252,6 +417,11 @@ onMounted(refresh);
 }
 .entry:hover { background: #161b22; }
 .doc-icon, .case-icon { font-size: 11px; }
+.case { border-radius: 6px; }
+.case.drop-target {
+	background: #182a14;
+	box-shadow: inset 0 0 0 1px #2ea043;
+}
 .case-head { display: flex; align-items: center; }
 .case-head .case-row { width: auto; flex: 1; min-width: 0; font-weight: 500; }
 .row-act {
@@ -270,6 +440,9 @@ onMounted(refresh);
 .row-act.danger:hover { color: #f85149; }
 .docs { list-style: none; margin: 0; padding: 0; }
 .docs .entry { padding-left: 40px; color: #adbac7; }
+.file-input { display: none; }
+.agent-blocked { opacity: 0.5; }
+.upload-error { color: #e6edf3; font-size: 13px; margin: 0; line-height: 1.5; }
 
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field span { color: #8b949e; font-size: 12px; }

@@ -24,6 +24,14 @@ Arbeitsweise:
 - Bevorzuge gezielte Tool-Aufrufe statt Vermutungen über Dateiinhalte.
 - Wenn die Aufgabe erledigt ist, antworte knapp auf Deutsch ohne weiteren Tool-Call.
 
+Dokumente lesen — WICHTIG:
+- JEDE Datei im Dateisystem ist als Text lesbar, unabhängig von der Endung.
+  Auch .pdf- und .docx-Dateien: ihr Text wird beim Hochladen extrahiert und ist
+  über read/cat direkt zugänglich. Gib NIE auf mit "PDF kann ich nicht lesen" —
+  lies die Datei einfach mit dem read-Tool (oder cat).
+- Liefert read leeren Text, enthielt das Dokument keinen extrahierbaren Text
+  (z.B. ein eingescanntes Bild-PDF); sage das dann genau so.
+
 Sensible Inhalte verlassen den Browser nie.`;
 
 async function buildSystemPrompt(): Promise<string> {

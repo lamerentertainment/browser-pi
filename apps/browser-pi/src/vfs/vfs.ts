@@ -80,12 +80,33 @@ class Vfs {
 		return rec.content;
 	}
 
-	async writeFile(path: string, content: string, cwd = "/"): Promise<string> {
+	async writeFile(
+		path: string,
+		content: string,
+		cwd = "/",
+		opts: { mime?: string; blob?: Blob } = {},
+	): Promise<string> {
 		const norm = normalizePath(path, cwd);
 		if (norm === "/") throw new VfsError("invalid_path", "Kann Wurzel nicht schreiben");
 		const record: FileRecord = { path: norm, content, mtime: Date.now() };
+		// mime/blob bewahren, wenn nicht explizit gesetzt: bearbeitet der Agent den
+		// extrahierten Text eines importierten Dokuments, bleibt das Original (Blob)
+		// als Quelle erhalten ("Original bleibt erhalten", CLAUDE.md).
+		const prev = opts.mime === undefined || opts.blob === undefined ? await idb.get(norm) : undefined;
+		const mime = opts.mime ?? prev?.mime;
+		const blob = opts.blob ?? prev?.blob;
+		if (mime !== undefined) record.mime = mime;
+		if (blob !== undefined) record.blob = blob;
 		await idb.put(record);
 		return norm;
+	}
+
+	/**
+	 * Liefert den vollständigen Record (inkl. mime/blob) — für die UI-Vorschau
+	 * von Binärdokumenten. Die Agent-Tools nutzen weiterhin readFile (Text).
+	 */
+	async getRecord(path: string, cwd = "/"): Promise<FileRecord | undefined> {
+		return idb.get(normalizePath(path, cwd));
 	}
 
 	async exists(path: string, cwd = "/"): Promise<boolean> {
@@ -116,7 +137,7 @@ class Vfs {
 		if (subtree.length === 0) throw new VfsError("not_found", `Kein Eintrag: ${src}`);
 		for (const rec of subtree) {
 			const newPath = rec.path === src ? dst : dst + rec.path.slice(src.length);
-			await idb.put({ path: newPath, content: rec.content, mtime: Date.now() });
+			await idb.put({ ...rec, path: newPath, mtime: Date.now() });
 			await idb.delete(rec.path);
 		}
 	}
@@ -129,7 +150,7 @@ class Vfs {
 		if (subtree.length === 0) throw new VfsError("not_found", `Kein Eintrag: ${src}`);
 		for (const rec of subtree) {
 			const newPath = rec.path === src ? dst : dst + rec.path.slice(src.length);
-			await idb.put({ path: newPath, content: rec.content, mtime: Date.now() });
+			await idb.put({ ...rec, path: newPath, mtime: Date.now() });
 		}
 	}
 
@@ -166,7 +187,7 @@ class Vfs {
 					name: rest,
 					path: rec.path,
 					type: "file",
-					size: rec.content.length,
+					size: rec.blob?.size ?? rec.content.length,
 					mtime: rec.mtime,
 				});
 			} else {
@@ -197,21 +218,62 @@ class Vfs {
 		return keys.filter((k) => norm === "/" || k === norm || k.startsWith(prefix)).sort();
 	}
 
-	/** Vollständiger Export als JSON (Backup / Geräte-Transfer ohne Cloud). */
-	async exportAll(): Promise<FileRecord[]> {
-		return idb.all();
+	/**
+	 * Vollständiger Export als JSON-serialisierbare Struktur (Backup /
+	 * Geräte-Transfer ohne Cloud). Binär-Blobs (PDF u.a.) werden base64-kodiert,
+	 * da JSON kein Blob trägt.
+	 */
+	async exportAll(): Promise<SerializedRecord[]> {
+		const records = await idb.all();
+		return Promise.all(
+			records.map(async (rec) => {
+				const out: SerializedRecord = { path: rec.path, content: rec.content, mtime: rec.mtime };
+				if (rec.mime !== undefined) out.mime = rec.mime;
+				if (rec.blob !== undefined) out.blobBase64 = await blobToBase64(rec.blob);
+				return out;
+			}),
+		);
 	}
 
-	async importAll(records: FileRecord[], opts: { overwrite?: boolean } = {}): Promise<number> {
+	async importAll(records: SerializedRecord[], opts: { overwrite?: boolean } = {}): Promise<number> {
 		let n = 0;
 		for (const rec of records) {
 			const norm = normalizePath(rec.path);
 			if (!opts.overwrite && (await idb.get(norm))) continue;
-			await idb.put({ path: norm, content: rec.content, mtime: rec.mtime ?? Date.now() });
+			const out: FileRecord = { path: norm, content: rec.content, mtime: rec.mtime ?? Date.now() };
+			if (rec.mime !== undefined) out.mime = rec.mime;
+			if (rec.blobBase64 !== undefined) out.blob = base64ToBlob(rec.blobBase64, rec.mime);
+			await idb.put(out);
 			n++;
 		}
 		return n;
 	}
+}
+
+/** JSON-serialisierbares Pendant zu FileRecord (Blob als base64). */
+export interface SerializedRecord {
+	path: string;
+	content: string;
+	mtime: number;
+	mime?: string;
+	blobBase64?: string;
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+	const bytes = new Uint8Array(await blob.arrayBuffer());
+	let binary = "";
+	const chunk = 0x8000; // String.fromCharCode in Blöcken, vermeidet Stack-Limits.
+	for (let i = 0; i < bytes.length; i += chunk) {
+		binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+	}
+	return btoa(binary);
+}
+
+function base64ToBlob(base64: string, mime?: string): Blob {
+	const binary = atob(base64);
+	const bytes = new Uint8Array(binary.length);
+	for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+	return new Blob([bytes], mime ? { type: mime } : {});
 }
 
 export const vfs = new Vfs();

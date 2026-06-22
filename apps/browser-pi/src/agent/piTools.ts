@@ -7,6 +7,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
 import { runShell, type ShellContext } from "../shell/shell.ts";
 import { vfs } from "../vfs/vfs.ts";
+import { isPathBlocked } from "../store/agentAccess.ts";
 
 function text(s: string) {
 	return { content: [{ type: "text" as const, text: s }], details: undefined };
@@ -45,9 +46,14 @@ export function createPiTools(ctx: ShellContext): AgentTool<TSchema>[] {
 	const read: AgentTool = {
 		name: "read",
 		label: "Datei lesen",
-		description: "Liest eine Datei aus dem Dokumenten-Dateisystem.",
+		description:
+			"Liest eine Datei aus dem Dokumenten-Dateisystem als Text. Funktioniert " +
+			"für JEDE Datei unabhängig von der Endung — auch .pdf und .docx: deren " +
+			"Text wurde beim Hochladen extrahiert und wird hier direkt zurückgegeben.",
 		parameters: ReadSchema,
 		execute: async (_id, params) => {
+			if (isPathBlocked(str(params.path), ctx.cwd))
+				return text(`Fehler: Zugriff auf ${params.path} verweigert.`);
 			try {
 				return text(await vfs.readFile(str(params.path), ctx.cwd));
 			} catch (e) {
@@ -62,6 +68,8 @@ export function createPiTools(ctx: ShellContext): AgentTool<TSchema>[] {
 		description: "Schreibt (oder überschreibt) eine Datei im Dokumenten-Dateisystem.",
 		parameters: WriteSchema,
 		execute: async (_id, params) => {
+			if (isPathBlocked(str(params.path), ctx.cwd))
+				return text(`Fehler: Zugriff auf ${params.path} verweigert.`);
 			try {
 				const p = await vfs.writeFile(str(params.path), str(params.content), ctx.cwd);
 				return text(`Geschrieben: ${p}`);
@@ -77,6 +85,8 @@ export function createPiTools(ctx: ShellContext): AgentTool<TSchema>[] {
 		description: "Ersetzt in einer Datei das erste Vorkommen von old_string durch new_string.",
 		parameters: EditSchema,
 		execute: async (_id, params) => {
+			if (isPathBlocked(str(params.path), ctx.cwd))
+				return text(`Fehler: Zugriff auf ${params.path} verweigert.`);
 			try {
 				const path = str(params.path);
 				const oldStr = str(params.old_string);

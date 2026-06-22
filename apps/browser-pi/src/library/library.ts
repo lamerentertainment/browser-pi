@@ -4,6 +4,7 @@
 // "Zielgruppe & Bedienkonzept"). Die Pfade bleiben reines Implementierungsdetail
 // — derselbe Namensraum, auf dem der Agent mit seinen Tools arbeitet.
 
+import { extractText } from "../import/extract.ts";
 import { basename, dirname, vfs } from "../vfs/vfs.ts";
 
 export type LibraryId = "prompts" | "textblocks" | "cases";
@@ -27,9 +28,9 @@ export interface LibraryDef {
 export const LIBRARIES: LibraryDef[] = [
 	{
 		id: "prompts",
-		label: "Vorlagen",
-		newLabel: "Neue Vorlage",
-		newField: "Titel der Vorlage",
+		label: "Prompts",
+		newLabel: "Neuer Prompt",
+		newField: "Titel des Prompts",
 		prefix: "/prompts",
 		nested: false,
 		template: (t) => `# ${t}\n\n`,
@@ -60,6 +61,8 @@ export interface LibraryEntry {
 	/** VFS-Pfad (intern). */
 	path: string;
 	mtime: number;
+	/** MIME-Typ bei importierten Binärdokumenten (PDF/DOCX/TXT); sonst leer. */
+	mime?: string;
 	/** Nur bei Fällen: die Dokumente innerhalb des Falls. */
 	documents?: LibraryEntry[];
 }
@@ -130,16 +133,39 @@ async function loadDocuments(folder: string): Promise<LibraryEntry[]> {
 	const docs: LibraryEntry[] = [];
 	for (const it of items) {
 		if (it.type !== "file") continue;
-		const content = await vfs.readFile(it.path);
-		docs.push({ title: titleOf(content, it.path), path: it.path, mtime: it.mtime });
+		const rec = await vfs.getRecord(it.path);
+		// Importierte Binärdokumente tragen ihren Originaldateinamen als Titel; der
+		// extrahierte Text hat keine Markdown-H1, die titleOf erkennen könnte.
+		const title = rec?.mime
+			? fileLabel(basename(it.path))
+			: titleOf(rec?.content ?? "", it.path);
+		docs.push({ title, path: it.path, mtime: it.mtime, mime: rec?.mime });
 	}
 	return sortByTitle(docs);
 }
 
+/** Dateiname für die Anzeige aufbereiten, Endung behalten (z.B. "Haftbefehl.pdf"). */
+function fileLabel(name: string): string {
+	const dot = name.lastIndexOf(".");
+	const base = dot > 0 ? name.slice(0, dot) : name;
+	const ext = dot > 0 ? name.slice(dot) : "";
+	const pretty = base.replace(/[-_]+/g, " ").trim();
+	return `${pretty ? pretty.charAt(0).toUpperCase() + pretty.slice(1) : name}${ext}`;
+}
+
+/**
+ * Das namengebende Leitdokument eines Falls: exakt die Datei „sachverhalt.md".
+ * Bewusst KEINE Pfad-Regex und KEIN Fallback auf documents[0] — sonst kippt der
+ * Fall-Name, sobald man ein Dokument hochlädt, dessen Name „Sachverhalt" enthält
+ * oder das alphabetisch vor das bisherige Leitdokument einsortiert.
+ */
+function leadDocument(documents: LibraryEntry[]): LibraryEntry | undefined {
+	return documents.find((d) => basename(d.path).toLowerCase() === "sachverhalt.md");
+}
+
 /** Fall-Titel aus dem Sachverhalt-Dokument (ohne Untertitel „— Sachverhalt"). */
 function caseTitle(folderName: string, documents: LibraryEntry[]): string {
-	const lead = documents.find((d) => /sachverhalt/i.test(d.path)) ?? documents[0];
-	const title = lead?.title.replace(/\s*—.*$/, "").trim();
+	const title = leadDocument(documents)?.title.replace(/\s*—.*$/, "").trim();
 	return title || prettify(folderName);
 }
 
@@ -214,6 +240,39 @@ export async function saveEntry(path: string, title: string, body: string): Prom
 	return target;
 }
 
+/**
+ * Benennt einen Fall um. Zwei Wirkungen, passend zu den zwei Sichten auf den
+ * Namensraum (CLAUDE.md, „Zwei Wege auf dieselben Daten"):
+ *  1. Der H1-Titel im Leitdokument (Sachverhalt) wird angepasst — er treibt den
+ *     in der UI angezeigten Fall-Namen (siehe caseTitle).
+ *  2. Der Fall-Ordner wird auf einen neuen Slug umbenannt — er treibt den
+ *     agent-sichtbaren Pfad und bleibt so sprechend.
+ * Gibt den (ggf. neuen) Ordner-Pfad zurück.
+ */
+export async function renameCase(caseFolder: string, newTitle: string): Promise<string> {
+	const title = newTitle.trim();
+	if (!title) return caseFolder;
+	// 1. H1 im Leitdokument (sachverhalt.md) anpassen — es treibt den Anzeige-Titel.
+	const documents = await loadDocuments(caseFolder);
+	const lead = leadDocument(documents);
+	if (lead) {
+		const { body } = parseDoc(await vfs.readFile(lead.path));
+		await vfs.writeFile(lead.path, serializeDoc(title, body));
+	}
+	// 2. Ordner-Slug umbenennen, falls er sich ändert.
+	const desired = slugify(title);
+	if (desired === basename(caseFolder)) return caseFolder;
+	const parent = dirname(caseFolder);
+	let target = `${parent}/${desired}`;
+	let n = 2;
+	while (await vfs.exists(target)) {
+		target = `${parent}/${desired}-${n}`;
+		n++;
+	}
+	await vfs.move(caseFolder, target);
+	return target;
+}
+
 /** Dupliziert einen Eintrag als „… (Kopie)" im selben Bereich. */
 export async function duplicateEntry(path: string): Promise<string> {
 	const content = await vfs.readFile(path);
@@ -233,5 +292,20 @@ export async function deleteEntry(path: string): Promise<void> {
 export async function createDocument(caseFolder: string, title: string): Promise<string> {
 	const target = await uniquePath(caseFolder, slugify(title));
 	await vfs.writeFile(target, `# ${title}\n\n`);
+	return target;
+}
+
+/**
+ * Importiert eine hochgeladene Datei (PDF/DOCX/TXT) als Dokument in einen Fall.
+ * Das Original bleibt als Blob erhalten (Mensch sieht es), der extrahierte Text
+ * wird als content gespeichert (der Agent liest ihn). Gibt den VFS-Pfad zurück.
+ */
+export async function uploadDocument(caseFolder: string, file: File): Promise<string> {
+	const { text, mime } = await extractText(file);
+	const dot = file.name.lastIndexOf(".");
+	const slug = slugify(dot > 0 ? file.name.slice(0, dot) : file.name);
+	const ext = dot > 0 ? file.name.slice(dot).toLowerCase() : "";
+	const target = await uniquePath(caseFolder, slug, ext);
+	await vfs.writeFile(target, text, "/", { mime, blob: file });
 	return target;
 }

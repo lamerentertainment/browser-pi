@@ -2,14 +2,18 @@
 // Bearbeiten-Dialog: Titel und Inhalt getrennt, ohne sichtbaren Pfad oder
 // Markdown-Gerüst. Titel ändern = Umbenennen. Plus Duplizieren und Löschen.
 // Konventionelle Verwaltung statt Shell (CLAUDE.md, "Zielgruppe & Bedienkonzept").
-import { ref, watch } from "vue";
+//
+// Importierte Binärdokumente (PDF/DOCX/TXT) sind nicht als Markdown editierbar:
+// das Original (Blob) bleibt unveränderte Quelle, daneben zeigen wir den
+// extrahierten Text read-only — das, was der Agent liest (Transparenz).
+import { onBeforeUnmount, ref, watch } from "vue";
 import {
 	deleteEntry,
 	duplicateEntry,
 	parseDoc,
 	saveEntry,
 } from "../library/library.ts";
-import { vfs } from "../vfs/vfs.ts";
+import { basename, vfs } from "../vfs/vfs.ts";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import Modal from "./Modal.vue";
 
@@ -25,17 +29,41 @@ const body = ref("");
 const busy = ref(false);
 const confirmingDelete = ref(false);
 
-// Beim Öffnen (und bei Pfadwechsel) Inhalt laden und Titel/Rumpf trennen.
+// Binär-Modus (importiertes Dokument): mime gesetzt, Original als Blob.
+const mime = ref<string | undefined>(undefined);
+const pdfUrl = ref<string | null>(null);
+
+function releasePdfUrl() {
+	if (pdfUrl.value) {
+		URL.revokeObjectURL(pdfUrl.value);
+		pdfUrl.value = null;
+	}
+}
+
+// Beim Öffnen (und bei Pfadwechsel) Inhalt laden.
 watch(
 	() => props.path,
 	async (path) => {
-		const content = await vfs.readFile(path);
-		const parsed = parseDoc(content);
+		releasePdfUrl();
+		const rec = await vfs.getRecord(path);
+		mime.value = rec?.mime;
+		if (rec?.mime) {
+			// Binärdokument: Originalname als Titel, extrahierter Text read-only.
+			title.value = basename(path);
+			body.value = rec.content;
+			if (rec.mime === "application/pdf" && rec.blob) {
+				pdfUrl.value = URL.createObjectURL(rec.blob);
+			}
+			return;
+		}
+		const parsed = parseDoc(rec?.content ?? "");
 		title.value = parsed.title;
 		body.value = parsed.body;
 	},
 	{ immediate: true },
 );
+
+onBeforeUnmount(releasePdfUrl);
 
 async function save() {
 	if (busy.value) return;
@@ -69,7 +97,25 @@ async function confirmDelete() {
 </script>
 
 <template>
-	<Modal title="Bearbeiten" @close="emit('close')">
+	<!-- Importiertes Dokument: Original-Vorschau + extrahierter Text (read-only). -->
+	<Modal v-if="mime" :title="title" wide @close="emit('close')">
+		<iframe v-if="pdfUrl" :src="pdfUrl" class="pdf-frame" :title="title"></iframe>
+		<details class="extracted" :open="!pdfUrl">
+			<summary>Extrahierter Text (für den Agenten)</summary>
+			<textarea :value="body" readonly spellcheck="false" rows="14"></textarea>
+		</details>
+
+		<template #footer>
+			<button class="btn danger" :disabled="busy" @click="confirmingDelete = true">
+				Löschen
+			</button>
+			<span class="spacer"></span>
+			<button class="btn ghost" :disabled="busy" @click="emit('close')">Schliessen</button>
+		</template>
+	</Modal>
+
+	<!-- Klartext-Dokument: konventioneller Editor. -->
+	<Modal v-else title="Bearbeiten" @close="emit('close')">
 		<label class="field">
 			<span>Titel</span>
 			<input v-model="title" placeholder="Titel" />
@@ -121,6 +167,33 @@ async function confirmDelete() {
 .field input:focus,
 .field textarea:focus { outline: none; border-color: #2f81f7; }
 .spacer { flex: 1; }
+.pdf-frame {
+	width: 100%;
+	height: 70vh;
+	border: 1px solid #30363d;
+	border-radius: 6px;
+	background: #fff;
+}
+.extracted { margin-top: 14px; }
+.extracted summary {
+	color: #8b949e;
+	font-size: 12px;
+	cursor: pointer;
+	padding: 4px 0;
+}
+.extracted textarea {
+	width: 100%;
+	margin-top: 8px;
+	background: #0d1117;
+	border: 1px solid #30363d;
+	border-radius: 6px;
+	padding: 9px 12px;
+	color: #adbac7;
+	font-family: ui-monospace, monospace;
+	font-size: 12px;
+	line-height: 1.5;
+	resize: vertical;
+}
 .btn {
 	padding: 7px 14px;
 	border-radius: 6px;
