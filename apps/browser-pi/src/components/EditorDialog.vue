@@ -3,22 +3,19 @@
 // Markdown-Gerüst. Titel ändern = Umbenennen. Plus Duplizieren und Löschen.
 // Konventionelle Verwaltung statt Shell (CLAUDE.md, "Zielgruppe & Bedienkonzept").
 //
-// Drei Modi: DOCX-Dateien öffnen im SuperDoc-Editor (bearbeitbar, Blob bleibt
-// erhalten); PDFs zeigen Original-Vorschau + extrahierten Text (read-only);
-// Klartext-Dokumente erhalten einen konventionellen Textarea-Editor.
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+// Zwei Modi: PDFs zeigen Original-Vorschau + extrahierten Text (read-only);
+// Klartext-Dokumente erhalten einen konventionellen Textarea-Editor. Word-
+// Dokumente (DOCX) docken stattdessen über DocumentPanel rechts am Chat an.
+import { onBeforeUnmount, ref, watch } from "vue";
 import {
 	deleteEntry,
 	duplicateEntry,
 	parseDoc,
-	saveDocxBlob,
 	saveEntry,
 } from "../library/library.ts";
-import { DOCX_MIME } from "../import/extract.ts";
 import { basename, vfs } from "../vfs/vfs.ts";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import Modal from "./Modal.vue";
-import SuperDocEditor from "./SuperDocEditor.vue";
 
 const props = defineProps<{ path: string }>();
 const emit = defineEmits<{
@@ -35,10 +32,6 @@ const confirmingDelete = ref(false);
 // Binär-Modus (importiertes Dokument): mime gesetzt, Original als Blob.
 const mime = ref<string | undefined>(undefined);
 const pdfUrl = ref<string | null>(null);
-// DOCX-Modus: Blob für SuperDocEditor + Ref auf die Editor-Instanz.
-const docxBlob = ref<Blob | undefined>(undefined);
-const superdocRef = ref<InstanceType<typeof SuperDocEditor> | null>(null);
-const isDocx = computed(() => mime.value === DOCX_MIME);
 
 function releasePdfUrl() {
 	if (pdfUrl.value) {
@@ -52,17 +45,13 @@ watch(
 	() => props.path,
 	async (path) => {
 		releasePdfUrl();
-		docxBlob.value = undefined;
 		const rec = await vfs.getRecord(path);
 		mime.value = rec?.mime;
 		if (rec?.mime) {
 			// Binärdokument: Originalname als Titel.
 			title.value = basename(path);
 			body.value = rec.content;
-			if (rec.mime === DOCX_MIME && rec.blob) {
-				// DOCX: Blob für SuperDocEditor bereitstellen.
-				docxBlob.value = rec.blob;
-			} else if (rec.mime === "application/pdf" && rec.blob) {
+			if (rec.mime === "application/pdf" && rec.blob) {
 				pdfUrl.value = URL.createObjectURL(rec.blob);
 			}
 			return;
@@ -75,19 +64,6 @@ watch(
 );
 
 onBeforeUnmount(releasePdfUrl);
-
-async function saveDocx() {
-	if (busy.value || !superdocRef.value) return;
-	busy.value = true;
-	try {
-		const blob = await superdocRef.value.getBlob();
-		await saveDocxBlob(props.path, blob);
-		emit("saved", props.path);
-		emit("close");
-	} finally {
-		busy.value = false;
-	}
-}
 
 async function save() {
 	if (busy.value) return;
@@ -121,25 +97,8 @@ async function confirmDelete() {
 </script>
 
 <template>
-	<!-- DOCX: SuperDoc-Editor (bearbeitbar, speicherbar). -->
-	<Modal v-if="isDocx" :title="title" wide @close="emit('close')">
-		<SuperDocEditor v-if="docxBlob" ref="superdocRef" :blob="docxBlob" />
-		<p v-else class="no-blob">Dokument-Bytes nicht verfügbar — bitte erneut hochladen.</p>
-
-		<template #footer>
-			<button class="btn danger" :disabled="busy" @click="confirmingDelete = true">
-				Löschen
-			</button>
-			<span class="spacer"></span>
-			<button class="btn ghost" :disabled="busy" @click="emit('close')">Abbrechen</button>
-			<button class="btn primary" :disabled="busy || !docxBlob" @click="saveDocx">
-				Speichern
-			</button>
-		</template>
-	</Modal>
-
 	<!-- PDF / sonstiges Binärdokument: Original-Vorschau + extrahierter Text (read-only). -->
-	<Modal v-else-if="mime" :title="title" wide @close="emit('close')">
+	<Modal v-if="mime" :title="title" wide @close="emit('close')">
 		<iframe v-if="pdfUrl" :src="pdfUrl" class="pdf-frame" :title="title"></iframe>
 		<details class="extracted" :open="!pdfUrl">
 			<summary>Extrahierter Text (für den Agenten)</summary>
@@ -246,5 +205,4 @@ async function confirmDelete() {
 .btn.primary { background: #238636; border-color: #2ea043; color: #fff; }
 .btn.danger { background: none; border-color: #f85149; color: #f85149; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.no-blob { color: #8b949e; font-size: 13px; margin: 0; padding: 24px 0; text-align: center; }
 </style>

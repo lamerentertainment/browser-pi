@@ -5,7 +5,7 @@
 // browser-pi-App-Instanz isoliert.
 import { onMounted, onUnmounted, ref } from "vue";
 import { SuperDoc } from "@harbour-enterprises/superdoc";
-import "@harbour-enterprises/superdoc/dist/style.css";
+import "@harbour-enterprises/superdoc/style.css";
 
 const props = defineProps<{ blob: Blob }>();
 
@@ -59,7 +59,7 @@ defineExpose({ getBlob });
 .superdoc-wrap {
 	display: flex;
 	flex-direction: column;
-	height: 68vh;
+	height: 100%;
 	min-height: 380px;
 }
 .superdoc-toolbar {

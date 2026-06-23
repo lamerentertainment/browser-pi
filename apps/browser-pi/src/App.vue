@@ -20,7 +20,9 @@ import Terminal from "./components/Terminal.vue";
 import CommandPalette from "./components/CommandPalette.vue";
 import LibrarySidebar from "./components/LibrarySidebar.vue";
 import EditorDialog from "./components/EditorDialog.vue";
+import DocumentPanel from "./components/DocumentPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
+import { DOCX_MIME } from "./import/extract.ts";
 
 const events = ref<AgentEvent[]>([]);
 const input = ref("");
@@ -28,6 +30,8 @@ const busy = ref(false);
 const showSettings = ref(false);
 const explorer = ref<InstanceType<typeof LibrarySidebar> | null>(null);
 const editingPath = ref<string | null>(null);
+// Word-Dokumente docken über dem Chat an, statt als Modal aufzugehen.
+const dockedDocPath = ref<string | null>(null);
 
 // --- Breite der Seitenleiste (per Ziehgriff verstellbar, lokal gemerkt) ------
 const SIDEBAR_MIN = 180;
@@ -53,6 +57,38 @@ function startResize(e: PointerEvent): void {
 	const onUp = () => {
 		resizing.value = false;
 		localStorage.setItem(SIDEBAR_KEY, String(sidebarWidth.value));
+		window.removeEventListener("pointermove", onMove);
+		window.removeEventListener("pointerup", onUp);
+	};
+	window.addEventListener("pointermove", onMove);
+	window.addEventListener("pointerup", onUp);
+}
+
+// --- Höhe des Dokument-Panels (per Ziehgriff verstellbar, lokal gemerkt) ------
+const DOC_MIN = 160;
+const DOC_KEY = "browser-pi:doc-height";
+
+function clampDoc(px: number): number {
+	// Maximal so hoch, dass dem Chat oben mindestens DOC_MIN bleibt.
+	const max = Math.max(DOC_MIN, window.innerHeight - 200);
+	return Math.min(max, Math.max(DOC_MIN, px));
+}
+
+const docHeight = ref(
+	clampDoc(Number(localStorage.getItem(DOC_KEY)) || 360),
+);
+
+function startDocResize(e: PointerEvent): void {
+	resizing.value = true;
+	const startY = e.clientY;
+	const startHeight = docHeight.value;
+	const onMove = (ev: PointerEvent) => {
+		// Dokument liegt oben: nach unten ziehen vergrössert das Panel.
+		docHeight.value = clampDoc(startHeight + (ev.clientY - startY));
+	};
+	const onUp = () => {
+		resizing.value = false;
+		localStorage.setItem(DOC_KEY, String(docHeight.value));
 		window.removeEventListener("pointermove", onMove);
 		window.removeEventListener("pointerup", onUp);
 	};
@@ -290,12 +326,25 @@ function cancel() {
 	busy.value = false;
 }
 
-function openFile(path: string) {
-	editingPath.value = path;
+async function openFile(path: string) {
+	// Word-Dokumente docken als halbe Spalte neben dem Chat an; alle übrigen
+	// Dokumenttypen (PDF, Klartext) öffnen weiterhin im Modal-Dialog.
+	const rec = await vfs.getRecord(path);
+	if (rec?.mime === DOCX_MIME) {
+		dockedDocPath.value = path;
+	} else {
+		editingPath.value = path;
+	}
 }
 
 function onEditorClosed() {
 	editingPath.value = null;
+	explorer.value?.refresh();
+	loadPrompts();
+}
+
+function onDocClosed() {
+	dockedDocPath.value = null;
 	explorer.value?.refresh();
 	loadPrompts();
 }
@@ -324,26 +373,47 @@ function onEditorClosed() {
 			></div>
 
 			<main class="main">
-				<Terminal :events="events" :busy="busy" />
-				<form class="inputbar" @submit.prevent="submit">
-					<CommandPalette
-						v-if="paletteCommands && paletteCommands.length"
-						:commands="paletteCommands"
-						:active-index="paletteIndex"
-						@select="acceptPaletteEntry"
-						@hover="paletteIndex = $event"
-					/>
-					<span class="prompt">›</span>
-					<input
-						v-model="input"
-						:disabled="busy"
-						placeholder="Aufgabe stellen – z.B. Fasse diesen Fall zusammen / für Befehle"
-						autofocus
-						@keydown="onInputKeydown"
-					/>
-					<button v-if="!busy" type="submit" :disabled="!input.trim()">Senden</button>
-					<button v-else type="button" class="stop" @click="cancel">Stopp</button>
-				</form>
+				<DocumentPanel
+					v-if="dockedDocPath"
+					:key="dockedDocPath"
+					class="doc-pane"
+					:style="{ height: docHeight + 'px', flexShrink: 0 }"
+					:path="dockedDocPath"
+					@close="onDocClosed"
+					@saved="explorer?.refresh()"
+					@deleted="onDocClosed"
+				/>
+				<div
+					v-if="dockedDocPath"
+					class="doc-resizer"
+					role="separator"
+					aria-orientation="horizontal"
+					title="Höhe ziehen"
+					@pointerdown="startDocResize"
+				></div>
+
+				<div class="chat-pane">
+					<Terminal :events="events" :busy="busy" />
+					<form class="inputbar" @submit.prevent="submit">
+						<CommandPalette
+							v-if="paletteCommands && paletteCommands.length"
+							:commands="paletteCommands"
+							:active-index="paletteIndex"
+							@select="acceptPaletteEntry"
+							@hover="paletteIndex = $event"
+						/>
+						<span class="prompt">›</span>
+						<input
+							v-model="input"
+							:disabled="busy"
+							placeholder="Aufgabe stellen – z.B. Fasse diesen Fall zusammen / für Befehle"
+							autofocus
+							@keydown="onInputKeydown"
+						/>
+						<button v-if="!busy" type="submit" :disabled="!input.trim()">Senden</button>
+						<button v-else type="button" class="stop" @click="cancel">Stopp</button>
+					</form>
+				</div>
 			</main>
 
 			<EditorDialog
@@ -396,7 +466,18 @@ function onEditorClosed() {
 	z-index: 1;
 }
 .resizer:hover, .body.resizing .resizer { background: #2f81f7; }
-.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.chat-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* Word-Dokument dockt unter dem Chat an; Höhe per Ziehgriff verstellbar. */
+.doc-pane { min-height: 0; }
+.doc-resizer {
+	flex: 0 0 5px;
+	margin: -2px 0;
+	cursor: row-resize;
+	background: transparent;
+	z-index: 1;
+}
+.doc-resizer:hover, .body.resizing .doc-resizer { background: #2f81f7; }
 .inputbar {
 	position: relative;
 	display: flex;

@@ -23,6 +23,10 @@ export default defineConfig({
 			// Nutzerdaten liegen NICHT hier, sondern in IndexedDB (Lokal-only-Invariante).
 			workbox: {
 				globPatterns: ["**/*.{js,css,html,svg,ico,woff2}"],
+				// Der SuperDoc-DOCX-Editor zieht einen grossen JS-Chunk (~8 MB) nach.
+				// Damit die App-Shell auch mit Editor offline startet (Offline-first-
+				// Invariante, CLAUDE.md), wird das Default-Limit von 2 MiB angehoben.
+				maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
 			},
 			manifest: {
 				name: "browser-pi",
