@@ -8,6 +8,7 @@ import {
 	createDocument,
 	createEntry,
 	deleteEntry,
+	downloadDocument,
 	type LibraryDef,
 	type LibraryEntry,
 	LIBRARIES,
@@ -61,6 +62,21 @@ const uploadError = ref<string | null>(null);
 const uploadAccept = ACCEPTED_EXTENSIONS.join(",");
 // Fall-Pfad, über dem gerade eine Datei schwebt (für die Drop-Hervorhebung).
 const dropTargetCase = ref<string | null>(null);
+
+// Dokument-Download: Original-Blob (PDF/DOCX/TXT) bzw. Textinhalt aufs Gerät laden.
+const downloading = ref<string | null>(null);
+
+async function download(path: string) {
+	if (downloading.value) return;
+	downloading.value = path;
+	try {
+		await downloadDocument(path);
+	} catch (err) {
+		uploadError.value = `Download fehlgeschlagen: ${(err as Error).message}`;
+	} finally {
+		downloading.value = null;
+	}
+}
 
 function startUpload(caseEntry: LibraryEntry) {
 	uploadTargetCase.value = caseEntry.path;
@@ -279,9 +295,17 @@ onMounted(refresh);
 							<li v-if="(entry.documents?.length ?? 0) === 0" class="docs-empty">
 								Noch keine Dokumente — Datei hierher ziehen oder ＋ / 📎 nutzen.
 							</li>
-							<li v-for="doc in entry.documents" :key="doc.path">
+							<li v-for="doc in entry.documents" :key="doc.path" class="doc-row">
 								<button class="entry doc" @click="emit('open', doc.path)">
 									<span class="doc-icon">{{ doc.mime === "application/pdf" ? "📕" : "📄" }}</span>{{ doc.title }}
+								</button>
+								<button
+									class="row-act"
+									title="Herunterladen"
+									:disabled="downloading === doc.path"
+									@click.stop="download(doc.path)"
+								>
+									⬇
 								</button>
 							</li>
 						</ul>
@@ -453,6 +477,10 @@ onMounted(refresh);
 .row-act.danger:hover { color: #f85149; }
 .docs { list-style: none; margin: 0; padding: 0; }
 .docs .entry { padding-left: 40px; color: #adbac7; }
+.doc-row { display: flex; align-items: center; }
+.doc-row .entry { flex: 1; min-width: 0; }
+.doc-row:hover .row-act { opacity: 1; }
+.row-act:disabled { opacity: 0.4; cursor: progress; }
 .docs-empty {
 	color: #484f58;
 	font-size: 11px;

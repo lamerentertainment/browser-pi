@@ -5,7 +5,7 @@
 // — derselbe Namensraum, auf dem der Agent mit seinen Tools arbeitet.
 
 import { extractDocxBlob, extractText, DOCX_MIME } from "../import/extract.ts";
-import { basename, dirname, vfs } from "../vfs/vfs.ts";
+import { basename, dirname, vfs, VfsError } from "../vfs/vfs.ts";
 
 export type LibraryId = "prompts" | "textblocks" | "cases" | "skills";
 
@@ -419,6 +419,32 @@ export async function duplicateEntry(path: string): Promise<string> {
 /** Löscht einen Eintrag (Datei) oder einen ganzen Fall-Ordner. */
 export async function deleteEntry(path: string): Promise<void> {
 	await vfs.delete(path);
+}
+
+/**
+ * Lädt ein Dokument als Datei auf das Host-Gerät herunter. Importierte
+ * Binärdokumente (PDF/DOCX/TXT) werden im Originalformat aus ihrem bewahrten Blob
+ * heruntergeladen; reine Textdokumente (Markdown, agent-erstellte Dateien) aus dem
+ * content. Der Dateiname entspricht dem VFS-Basename (z.B. „haftbefehl.pdf").
+ *
+ * Das verlässt bewusst die App — der Nutzer löst es explizit aus; es ist kein
+ * automatischer Upload/Sync (CLAUDE.md, Lokal-only-Invariante bleibt gewahrt).
+ */
+export async function downloadDocument(path: string): Promise<void> {
+	const rec = await vfs.getRecord(path);
+	if (!rec) throw new VfsError("not_found", `Kein Dokument: ${path}`);
+	const blob = rec.blob ?? new Blob([rec.content], { type: "text/plain;charset=utf-8" });
+	const url = URL.createObjectURL(blob);
+	try {
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = basename(path);
+		document.body.appendChild(a);
+		a.click();
+		a.remove();
+	} finally {
+		URL.revokeObjectURL(url);
+	}
 }
 
 /** Legt ein neues Dokument innerhalb eines Falls an. */
