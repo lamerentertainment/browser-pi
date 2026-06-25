@@ -7,7 +7,7 @@
 import { extractDocxBlob, extractText, DOCX_MIME } from "../import/extract.ts";
 import { basename, dirname, vfs } from "../vfs/vfs.ts";
 
-export type LibraryId = "prompts" | "textblocks" | "cases";
+export type LibraryId = "prompts" | "textblocks" | "cases" | "skills";
 
 /**
  * Platzhalter-Datei, die einen sonst leeren Ordner im VFS materialisiert (das VFS
@@ -64,6 +64,21 @@ export const LIBRARIES: LibraryDef[] = [
 		prefix: "/cases",
 		nested: true,
 		template: (t) => `# ${t} — Sachverhalt\n\n`,
+	},
+	{
+		// Skills unterscheiden sich von Prompts: NICHT der Nutzer ruft sie per
+		// Slash auf, sondern der Agent lädt sie SELBST, wenn die Aufgabe zur
+		// `description` im Frontmatter passt (siehe buildSystemPrompt in
+		// agent/piSession.ts). Darum bekommt die Vorlage ein Frontmatter-Gerüst
+		// mit `name` (kebab-Slug) und `description` (das Auswahlkriterium).
+		id: "skills",
+		label: "Skills",
+		newLabel: "Neuer Skill",
+		newField: "Titel des Skills",
+		prefix: "/skills",
+		nested: false,
+		template: (t) =>
+			`---\nname: ${slugify(t)}\ndescription: In EINEM Satz beschreiben, WANN dieser Skill genutzt werden soll — der Agent wählt ihn anhand dieser Beschreibung.\n---\n\n# ${t}\n\nAnleitung für den Agenten …\n`,
 	},
 ];
 
@@ -304,6 +319,90 @@ export async function renameCase(caseFolder: string, newTitle: string): Promise<
 		n++;
 	}
 	await vfs.move(caseFolder, target);
+	return target;
+}
+
+// ── Skills ──────────────────────────────────────────────────────────────────
+// Ein Skill ist eine Markdown-Datei mit YAML-Frontmatter (`name` + `description`)
+// plus Anleitung. Anders als ein Prompt wählt der AGENT ihn selbst anhand der
+// `description` (siehe buildSkillsSection in agent/piSession.ts). Für den
+// anfängergerechten Editor zerlegen wir die Datei in drei Felder — Titel,
+// Beschreibung („wann anwenden"), Anleitung — und halten das technische
+// Frontmatter (inkl. kebab-`name`) verborgen.
+
+const SKILLS_PREFIX = "/skills";
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+
+/** Liegt der Pfad in der Skills-Bibliothek? */
+export function isSkillPath(path: string): boolean {
+	return path === SKILLS_PREFIX || path.startsWith(`${SKILLS_PREFIX}/`);
+}
+
+export interface ParsedSkill {
+	/** Anzeige-Titel (H1 nach dem Frontmatter). */
+	title: string;
+	/** Auswahlkriterium für den Agenten (Frontmatter `description`). */
+	description: string;
+	/** Anleitung (Rumpf ohne Frontmatter und ohne H1). */
+	body: string;
+}
+
+/** Zerlegt einen Skill in Titel, Beschreibung und Anleitung. */
+export function parseSkill(content: string): ParsedSkill {
+	let description = "";
+	let rest = content;
+	const fm = content.match(FRONTMATTER_RE);
+	if (fm) {
+		for (const line of fm[1].split(/\r?\n/)) {
+			const m = line.match(/^description:\s*(.*)$/);
+			if (m) description = m[1].trim().replace(/^["']|["']$/g, "");
+		}
+		rest = content.slice(fm[0].length);
+	}
+	const { title, body } = parseDoc(rest);
+	return { title, description, body };
+}
+
+/**
+ * Baut Titel/Beschreibung/Anleitung wieder zu einer Skill-Datei zusammen. Der
+ * kebab-`name` wird aus dem Titel abgeleitet (passend zum Dateinamen-Slug), die
+ * Beschreibung auf eine Zeile normalisiert (das minimale Frontmatter-Format in
+ * piSession.ts liest nur flache `key: value`-Zeilen).
+ */
+export function serializeSkill(title: string, description: string, body: string): string {
+	const name = slugify(title);
+	const desc = description.replace(/\r?\n+/g, " ").trim();
+	const doc = serializeDoc(title, body);
+	return `---\nname: ${name}\ndescription: ${desc}\n---\n\n${doc}`;
+}
+
+/**
+ * Speichert einen Skill. Wie saveEntry: ändert sich der Titel, wird die Datei
+ * auf einen neuen Slug umbenannt — der `name` im Frontmatter und der Dateiname
+ * bleiben so synchron. Gibt den finalen Pfad zurück.
+ */
+export async function saveSkill(
+	path: string,
+	title: string,
+	description: string,
+	body: string,
+): Promise<string> {
+	await vfs.writeFile(path, serializeSkill(title, description, body));
+	const desired = slugify(title);
+	const currentBase = basename(path).replace(/\.md$/i, "");
+	if (!title.trim() || desired === currentBase) return path;
+	const target = await uniquePath(dirname(path), desired);
+	await vfs.move(path, target);
+	return target;
+}
+
+/** Dupliziert einen Skill als „… (Kopie)" (frontmatter-bewusst). */
+export async function duplicateSkill(path: string): Promise<string> {
+	const content = await vfs.readFile(path);
+	const { title, description, body } = parseSkill(content);
+	const newTitle = `${title || prettify(basename(path))} (Kopie)`;
+	const target = await uniquePath(dirname(path), slugify(newTitle));
+	await vfs.writeFile(target, serializeSkill(newTitle, description, body));
 	return target;
 }
 

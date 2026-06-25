@@ -6,12 +6,16 @@
 // Zwei Modi: PDFs zeigen Original-Vorschau + extrahierten Text (read-only);
 // Klartext-Dokumente erhalten einen konventionellen Textarea-Editor. Word-
 // Dokumente (DOCX) docken stattdessen über DocumentPanel rechts am Chat an.
-import { onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import {
 	deleteEntry,
 	duplicateEntry,
+	duplicateSkill,
+	isSkillPath,
 	parseDoc,
+	parseSkill,
 	saveEntry,
+	saveSkill,
 } from "../library/library.ts";
 import { basename, vfs } from "../vfs/vfs.ts";
 import ConfirmDialog from "./ConfirmDialog.vue";
@@ -26,8 +30,13 @@ const emit = defineEmits<{
 
 const title = ref("");
 const body = ref("");
+// Nur bei Skills: das Auswahlkriterium für den Agenten (Frontmatter description).
+const description = ref("");
 const busy = ref(false);
 const confirmingDelete = ref(false);
+
+// Skills bekommen ein eigenes Formular (Titel + „wann anwenden" + Anleitung).
+const isSkill = computed(() => isSkillPath(props.path));
 
 // Binär-Modus (importiertes Dokument): mime gesetzt, Original als Blob.
 const mime = ref<string | undefined>(undefined);
@@ -56,6 +65,13 @@ watch(
 			}
 			return;
 		}
+		if (isSkillPath(path)) {
+			const skill = parseSkill(rec?.content ?? "");
+			title.value = skill.title;
+			description.value = skill.description;
+			body.value = skill.body;
+			return;
+		}
 		const parsed = parseDoc(rec?.content ?? "");
 		title.value = parsed.title;
 		body.value = parsed.body;
@@ -69,7 +85,9 @@ async function save() {
 	if (busy.value) return;
 	busy.value = true;
 	try {
-		const finalPath = await saveEntry(props.path, title.value, body.value);
+		const finalPath = isSkill.value
+			? await saveSkill(props.path, title.value, description.value, body.value)
+			: await saveEntry(props.path, title.value, body.value);
 		emit("saved", finalPath);
 		emit("close");
 	} finally {
@@ -81,7 +99,9 @@ async function duplicate() {
 	if (busy.value) return;
 	busy.value = true;
 	try {
-		const newPath = await duplicateEntry(props.path);
+		const newPath = isSkill.value
+			? await duplicateSkill(props.path)
+			: await duplicateEntry(props.path);
 		emit("saved", newPath);
 		emit("close");
 	} finally {
@@ -111,6 +131,38 @@ async function confirmDelete() {
 			</button>
 			<span class="spacer"></span>
 			<button class="btn ghost" :disabled="busy" @click="emit('close')">Schliessen</button>
+		</template>
+	</Modal>
+
+	<!-- Skill: eigenes Formular. Die Beschreibung steuert, WANN der Agent den
+	     Skill von selbst anwendet — darum prominent und erklärt. -->
+	<Modal v-else-if="isSkill" title="Skill bearbeiten" @close="emit('close')">
+		<label class="field">
+			<span>Titel</span>
+			<input v-model="title" placeholder="Titel des Skills" />
+		</label>
+		<label class="field">
+			<span>Wann anwenden? (der Agent wählt den Skill anhand dieser Beschreibung)</span>
+			<textarea
+				v-model="description"
+				placeholder="In einem Satz: bei welcher Art Aufgabe soll der Agent diesen Skill nutzen?"
+				spellcheck="false"
+				rows="2"
+			></textarea>
+		</label>
+		<label class="field">
+			<span>Anleitung für den Agenten</span>
+			<textarea v-model="body" spellcheck="false" rows="12"></textarea>
+		</label>
+
+		<template #footer>
+			<button class="btn danger" :disabled="busy" @click="confirmingDelete = true">
+				Löschen
+			</button>
+			<span class="spacer"></span>
+			<button class="btn ghost" :disabled="busy" @click="duplicate">Duplizieren</button>
+			<button class="btn ghost" :disabled="busy" @click="emit('close')">Abbrechen</button>
+			<button class="btn primary" :disabled="busy" @click="save">Speichern</button>
 		</template>
 	</Modal>
 

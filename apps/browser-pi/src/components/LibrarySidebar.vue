@@ -27,11 +27,13 @@ const entries = reactive<Record<LibraryId, LibraryEntry[]>>({
 	prompts: [],
 	textblocks: [],
 	cases: [],
+	skills: [],
 });
 const openSections = reactive<Record<LibraryId, boolean>>({
 	prompts: false,
 	textblocks: false,
 	cases: true,
+	skills: false,
 });
 const expandedCases = reactive<Set<string>>(new Set());
 

@@ -18,7 +18,7 @@ import { vfs } from "../vfs/vfs.ts";
 
 const SYSTEM_PROMPT = `Du bist pi, ein Agent, der vollständig im Browser läuft und in einem
 sandboxierten Dokumenten-Dateisystem arbeitet (Verzeichnisse: /cases, /prompts,
-/textblocks). Du hast KEINEN Zugriff auf das Host-System, das Internet oder
+/textblocks, /skills). Du hast KEINEN Zugriff auf das Host-System, das Internet oder
 beliebige Shell-Befehle — nur auf die bereitgestellten Tools.
 
 Arbeitsweise:
@@ -50,6 +50,57 @@ Word-Dokument live bearbeiten — Überarbeitungsmodus:
 
 Sensible Inhalte verlassen den Browser nie.`;
 
+/**
+ * Liest `name` und `description` aus einem führenden YAML-Frontmatter-Block
+ * (`---\n…\n---`). Bewusst minimal (nur flache `key: value`-Zeilen) — genug für
+ * das Skill-Frontmatter, ohne eine YAML-Abhängigkeit in den Browser-Bundle zu
+ * ziehen. Vgl. die ausführliche Variante im coding-agent (core/skills.ts).
+ */
+function parseSkillFrontmatter(content: string): { name?: string; description?: string } {
+	const m = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+	if (!m) return {};
+	const out: { name?: string; description?: string } = {};
+	for (const line of m[1].split(/\r?\n/)) {
+		const kv = line.match(/^(name|description):\s*(.*)$/);
+		if (kv) {
+			const value = kv[2].trim().replace(/^["']|["']$/g, "");
+			if (kv[1] === "name") out.name = value;
+			else out.description = value;
+		}
+	}
+	return out;
+}
+
+/**
+ * Sammelt die Skills aus /skills für den System-Prompt. Anders als Prompts (vom
+ * Nutzer per Slash aufgerufen) wählt der Agent Skills SELBST anhand ihrer
+ * `description`. Darum wird hier Name + Beschreibung + Pfad gelistet — analog zu
+ * formatSkillsForPrompt im coding-agent. Skills ohne `description` werden
+ * übersprungen (sie taugen nicht zur modellgesteuerten Auswahl).
+ */
+async function buildSkillsSection(): Promise<string> {
+	const files = await vfs.list("/skills");
+	const lines: string[] = [];
+	for (const file of files) {
+		if (file.type !== "file") continue;
+		try {
+			const content = await vfs.readFile(file.path);
+			const { name, description } = parseSkillFrontmatter(content);
+			if (!description) continue;
+			const skillName = name || file.name.replace(/\.md$/i, "");
+			lines.push(
+				`  <skill>\n    <name>${skillName}</name>\n    <description>${description}</description>\n    <location>${file.path}</location>\n  </skill>`,
+			);
+		} catch {}
+	}
+	if (lines.length === 0) return "";
+	return (
+		`\n\nDie folgenden Skills liefern Spezialanweisungen für bestimmte Aufgaben.` +
+		` Passt eine Aufgabe zur Beschreibung eines Skills, lies die Skill-Datei mit dem read-Tool` +
+		` und befolge ihre Anweisungen.\n<available_skills>\n${lines.join("\n")}\n</available_skills>`
+	);
+}
+
 async function buildSystemPrompt(): Promise<string> {
 	try {
 		const files = await vfs.list("/prompts");
@@ -73,13 +124,15 @@ async function buildSystemPrompt(): Promise<string> {
 			promptSection = `\n\nVerfügbare Prompt-Vorlagen im System:\n${promptLines.join("\n")}\nWenn eine dieser Vorlagen für die Aufgabe nützlich ist, kannst du sie mit dem read/grep Tool lesen, um ihre Anweisungen präzise zu berücksichtigen und anzuwenden.`;
 		}
 
+		const skillsSection = await buildSkillsSection();
+
 		// Hinweis auf das aktuell offene Word-Dokument (live bearbeitbar).
 		const activeWord = getActiveWordDoc();
 		const wordSection = activeWord
 			? `\n\nAKTUELL GEÖFFNET: Das Word-Dokument „${activeWord.title}" (${activeWord.path}) ist im Editor offen und LIVE bearbeitbar. Verwende die word_*-Tools; deine Änderungen erscheinen automatisch als Überarbeitung (Track Changes).`
 			: "";
 
-		return SYSTEM_PROMPT + promptSection + wordSection;
+		return SYSTEM_PROMPT + promptSection + skillsSection + wordSection;
 	} catch (err) {
 		return SYSTEM_PROMPT;
 	}
