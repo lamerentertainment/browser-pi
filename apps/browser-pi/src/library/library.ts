@@ -9,6 +9,18 @@ import { basename, dirname, vfs } from "../vfs/vfs.ts";
 
 export type LibraryId = "prompts" | "textblocks" | "cases";
 
+/**
+ * Platzhalter-Datei, die einen sonst leeren Ordner im VFS materialisiert (das VFS
+ * kennt nur implizite Verzeichnisse — sie existieren ausschliesslich über ihre
+ * Kinder). Gleiche Konvention wie die Shell-`mkdir`. Bei Fällen trägt ihr Inhalt
+ * zusätzlich den Anzeige-Titel, solange es noch kein Leitdokument gibt.
+ */
+const PLACEHOLDER = ".keep";
+
+function isPlaceholder(name: string): boolean {
+	return name === PLACEHOLDER;
+}
+
 export interface LibraryDef {
 	id: LibraryId;
 	/** Angezeigter Bereichsname. */
@@ -119,7 +131,7 @@ export async function loadLibrary(def: LibraryDef): Promise<LibraryEntry[]> {
 		if (e.type !== "dir") continue;
 		const documents = await loadDocuments(e.path);
 		cases.push({
-			title: caseTitle(e.name, documents),
+			title: await caseTitle(e.path, e.name, documents),
 			path: e.path,
 			mtime: e.mtime,
 			documents,
@@ -132,7 +144,7 @@ async function loadDocuments(folder: string): Promise<LibraryEntry[]> {
 	const items = await vfs.list(folder);
 	const docs: LibraryEntry[] = [];
 	for (const it of items) {
-		if (it.type !== "file") continue;
+		if (it.type !== "file" || isPlaceholder(it.name)) continue;
 		const rec = await vfs.getRecord(it.path);
 		// Importierte Binärdokumente tragen ihren Originaldateinamen als Titel; der
 		// extrahierte Text hat keine Markdown-H1, die titleOf erkennen könnte.
@@ -163,10 +175,23 @@ function leadDocument(documents: LibraryEntry[]): LibraryEntry | undefined {
 	return documents.find((d) => basename(d.path).toLowerCase() === "sachverhalt.md");
 }
 
-/** Fall-Titel aus dem Sachverhalt-Dokument (ohne Untertitel „— Sachverhalt"). */
-function caseTitle(folderName: string, documents: LibraryEntry[]): string {
-	const title = leadDocument(documents)?.title.replace(/\s*—.*$/, "").trim();
-	return title || prettify(folderName);
+/**
+ * Fall-Titel — drei Quellen in absteigender Priorität:
+ *  1. H1 des Leitdokuments „sachverhalt.md" (ohne Untertitel „— Sachverhalt").
+ *  2. Im Platzhalter (.keep) gespeicherter Titel — so behält ein leerer Fall den
+ *     vom Nutzer eingegebenen Namen (mit Umlauten/Gross-Klein), statt auf den
+ *     ascii-Slug des Ordners zurückzufallen.
+ *  3. Der prettifizierte Ordnername (Fallback, u.a. für agent-/shell-erzeugte Ordner).
+ */
+async function caseTitle(
+	folder: string,
+	folderName: string,
+	documents: LibraryEntry[],
+): Promise<string> {
+	const lead = leadDocument(documents)?.title.replace(/\s*—.*$/, "").trim();
+	if (lead) return lead;
+	const stored = (await vfs.getRecord(`${folder}/${PLACEHOLDER}`))?.content.trim();
+	return stored || prettify(folderName);
 }
 
 /** Findet einen noch freien Pfad, hängt bei Kollision -2, -3, … an. */
@@ -181,9 +206,15 @@ async function uniquePath(dir: string, slug: string, ext = ".md"): Promise<strin
 }
 
 /**
- * Legt einen neuen Eintrag an und gibt dessen Pfad zurück. Für Fälle entsteht
- * ein Ordner mit Start-Dokument; für Vorlagen/Textbausteine eine einzelne Datei.
- * Der Nutzer nennt nur einen Titel — der Pfad wird daraus abgeleitet.
+ * Legt einen neuen Eintrag an und gibt dessen Pfad zurück.
+ *
+ * Für Fälle entsteht ein **leerer Ordner** (nur ein Platzhalter, der den Titel
+ * trägt) — bewusst KEIN erzwungenes „Sachverhalt"-Dokument. Der Nutzer entscheidet
+ * selbst, ob und welche Dokumente er anlegt oder per Drag & Drop hineinzieht. Der
+ * zurückgegebene Pfad ist deshalb der Ordner, nicht eine Datei.
+ *
+ * Für Vorlagen/Textbausteine entsteht eine einzelne Datei. Der Nutzer nennt nur
+ * einen Titel — der Pfad wird daraus abgeleitet.
  */
 export async function createEntry(def: LibraryDef, title: string): Promise<string> {
 	const slug = slugify(title);
@@ -194,9 +225,8 @@ export async function createEntry(def: LibraryDef, title: string): Promise<strin
 			folder = `${def.prefix}/${slug}-${n}`;
 			n++;
 		}
-		const path = `${folder}/sachverhalt.md`;
-		await vfs.writeFile(path, def.template(title));
-		return path;
+		await vfs.writeFile(`${folder}/${PLACEHOLDER}`, title.trim());
+		return folder;
 	}
 	const path = await uniquePath(def.prefix, slug);
 	await vfs.writeFile(path, def.template(title));
@@ -252,12 +282,16 @@ export async function saveEntry(path: string, title: string, body: string): Prom
 export async function renameCase(caseFolder: string, newTitle: string): Promise<string> {
 	const title = newTitle.trim();
 	if (!title) return caseFolder;
-	// 1. H1 im Leitdokument (sachverhalt.md) anpassen — es treibt den Anzeige-Titel.
+	// 1. Anzeige-Titel anpassen. Gibt es ein Leitdokument (sachverhalt.md), treibt
+	//    dessen H1 den Titel; sonst lebt der Titel im Platzhalter (.keep), damit
+	//    auch ein leerer Fall seinen Namen behält (siehe caseTitle).
 	const documents = await loadDocuments(caseFolder);
 	const lead = leadDocument(documents);
 	if (lead) {
 		const { body } = parseDoc(await vfs.readFile(lead.path));
 		await vfs.writeFile(lead.path, serializeDoc(title, body));
+	} else {
+		await vfs.writeFile(`${caseFolder}/${PLACEHOLDER}`, title);
 	}
 	// 2. Ordner-Slug umbenennen, falls er sich ändert.
 	const desired = slugify(title);

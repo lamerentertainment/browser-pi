@@ -156,14 +156,22 @@ async function confirmCreate() {
 	creatingBusy.value = true;
 	try {
 		const { target } = dialog;
-		const path =
-			target.kind === "library"
-				? await createEntry(target.def, title)
-				: await createDocument(target.folder, title);
-		await refresh();
-		openSections[target.kind === "library" ? target.def.id : target.sectionId] = true;
-		creating.value = null;
-		emit("open", path);
+		if (target.kind === "library") {
+			const path = await createEntry(target.def, title);
+			await refresh();
+			openSections[target.def.id] = true;
+			creating.value = null;
+			// Ein neuer Fall ist ein leerer Ordner — es gibt kein Dokument zum Öffnen.
+			// Nur aufklappen, damit der Nutzer Dokumente anlegen/hineinziehen kann.
+			if (target.def.nested) expandedCases.add(path);
+			else emit("open", path);
+		} else {
+			const path = await createDocument(target.folder, title);
+			await refresh();
+			openSections[target.sectionId] = true;
+			creating.value = null;
+			emit("open", path);
+		}
 	} finally {
 		creatingBusy.value = false;
 	}
@@ -266,6 +274,9 @@ onMounted(refresh);
 							</button>
 						</div>
 						<ul v-if="expandedCases.has(entry.path)" class="docs">
+							<li v-if="(entry.documents?.length ?? 0) === 0" class="docs-empty">
+								Noch keine Dokumente — Datei hierher ziehen oder ＋ / 📎 nutzen.
+							</li>
 							<li v-for="doc in entry.documents" :key="doc.path">
 								<button class="entry doc" @click="emit('open', doc.path)">
 									<span class="doc-icon">{{ doc.mime === "application/pdf" ? "📕" : "📄" }}</span>{{ doc.title }}
@@ -440,6 +451,13 @@ onMounted(refresh);
 .row-act.danger:hover { color: #f85149; }
 .docs { list-style: none; margin: 0; padding: 0; }
 .docs .entry { padding-left: 40px; color: #adbac7; }
+.docs-empty {
+	color: #484f58;
+	font-size: 11px;
+	font-style: italic;
+	padding: 4px 12px 6px 40px;
+	line-height: 1.4;
+}
 .file-input { display: none; }
 .agent-blocked { opacity: 0.5; }
 .upload-error { color: #e6edf3; font-size: 13px; margin: 0; line-height: 1.5; }
