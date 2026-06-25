@@ -1,6 +1,7 @@
-// Dev-only seed — lädt echte Test-PDFs (mit Blob) in den Fall «Schröder».
-// Läuft nur im Vite-Dev-Modus; in Production ist diese Datei ein No-op.
-// PDFs liegen unter public/test-fixtures/ und werden per fetch() geladen.
+// Seed — lädt echte Test-PDFs (mit Blob) in den Fall «Schröder».
+// Läuft in Dev UND Production: die PDFs unter public/test-fixtures/ werden von
+// Vite nach dist/ kopiert und sind auch deployt per fetch() erreichbar. So
+// erscheinen im Bestand die echten PDFs statt nur der extrahierte Text.
 
 import { extractText } from "../import/extract.ts";
 import { slugify } from "../library/library.ts";
@@ -36,7 +37,6 @@ const FIXTURES: Fixture[] = [
 ];
 
 export async function devSeedIfNeeded(): Promise<void> {
-	if (!import.meta.env.DEV) return;
 	if (await idb.get(DEV_SEED_MARKER)) return;
 
 	for (const fixture of FIXTURES) {
