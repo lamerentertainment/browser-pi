@@ -160,8 +160,14 @@ export class PiAgentSession {
 		this.agent.abort();
 	}
 
-	async send(userText: string): Promise<{ cancelled: boolean }> {
-		this.emit({ type: "user", text: userText });
+	// `userText` geht an den Agenten. Ist `display` gesetzt, weicht das
+	// Terminal-Echo davon ab (z. B. Bezugsstelle als Badge statt verbosem
+	// Vorspann) — der Agent sieht trotzdem den vollen Wortlaut.
+	async send(
+		userText: string,
+		display?: { text: string; cite?: string },
+	): Promise<{ cancelled: boolean }> {
+		this.emit({ type: "user", text: display?.text ?? userText, cite: display?.cite });
 		try {
 			this.agent.state.systemPrompt = await buildSystemPrompt();
 			await this.agent.prompt(userText);

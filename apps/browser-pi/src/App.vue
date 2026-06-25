@@ -12,7 +12,7 @@ import {
 import { loadLibrary, LIBRARIES } from "./library/library.ts";
 import { vfs } from "./vfs/vfs.ts";
 import { PiAgentSession } from "./agent/piSession.ts";
-import { type CiteAnchor, citePrompt } from "./agent/docCite.ts";
+import { type CiteAnchor, citeBadge, citePrompt } from "./agent/docCite.ts";
 import { settings } from "./store/settings.ts";
 import { requestPersistence } from "./vfs/idb.ts";
 import { seedIfNeeded } from "./vfs/seed.ts";
@@ -28,6 +28,11 @@ import { DOCX_MIME } from "./import/extract.ts";
 const events = ref<AgentEvent[]>([]);
 const input = ref("");
 const inputEl = ref<HTMLInputElement | null>(null);
+// Per Rechtsklick angeheftete Bezugsstelle im Word-Dokument. Liegt separat vom
+// getippten Text, damit sie als Badge (Eingabezeile + Terminal-Echo) erscheint
+// und nur dem Agenten als voller Wortlaut-Vorspann mitgeschickt wird.
+const citedAnchor = ref<CiteAnchor | null>(null);
+const citedBadge = computed(() => (citedAnchor.value ? citeBadge(citedAnchor.value) : ""));
 const busy = ref(false);
 const showSettings = ref(false);
 const explorer = ref<InstanceType<typeof LibrarySidebar> | null>(null);
@@ -184,10 +189,17 @@ async function submit() {
 		return;
 	}
 
+	// Angeheftete Bezugsstelle: dem Agenten als voller Wortlaut-Vorspann
+	// mitgeben, im Terminal aber nur als Badge + getippter Text echoen.
+	const cite = citedAnchor.value;
+	const agentText = cite ? citePrompt(cite) + text : text;
+	const display = cite ? { text, cite: citedBadge.value } : undefined;
+	citedAnchor.value = null;
+
 	input.value = "";
 	busy.value = true;
 	session.value.updateConfig(settings);
-	await session.value.send(text);
+	await session.value.send(agentText, display);
 	busy.value = false;
 	explorer.value?.refresh();
 	loadPrompts();
@@ -356,14 +368,9 @@ function onDocClosed() {
 // fokussieren sie, damit er nur noch seinen Auftrag dahinter tippen muss. Der
 // Agent erkennt die Stelle am wörtlichen Text (Grundlage der Word-Tools).
 function onDocCite(anchor: CiteAnchor) {
-	input.value = citePrompt(anchor);
+	citedAnchor.value = anchor;
 	paletteDismissed.value = true;
-	nextTick(() => {
-		const el = inputEl.value;
-		if (!el) return;
-		el.focus();
-		el.setSelectionRange(el.value.length, el.value.length);
-	});
+	nextTick(() => inputEl.value?.focus());
 }
 </script>
 
@@ -421,6 +428,15 @@ function onDocCite(anchor: CiteAnchor) {
 							@hover="paletteIndex = $event"
 						/>
 						<span class="prompt">›</span>
+						<span v-if="citedBadge" class="cite-chip" :title="citedBadge">
+							📍 {{ citedBadge }}
+							<button
+								type="button"
+								class="cite-x"
+								title="Bezug entfernen"
+								@click="citedAnchor = null"
+							>✕</button>
+						</span>
 						<input
 							ref="inputEl"
 							v-model="input"
@@ -507,6 +523,36 @@ function onDocCite(anchor: CiteAnchor) {
 	border-top: 1px solid #21262d;
 }
 .inputbar .prompt { color: #7ee787; font-weight: bold; }
+/* Angeheftete Bezugsstelle als kompakter, kleingeschriebener Badge. */
+.cite-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 260px;
+	padding: 3px 6px 3px 9px;
+	background: #1f2a1c;
+	border: 1px solid #2ea04366;
+	border-radius: 999px;
+	color: #7ee787;
+	font-family: ui-monospace, monospace;
+	font-size: 11px;
+	text-transform: lowercase;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	flex-shrink: 0;
+}
+.cite-chip .cite-x {
+	padding: 0;
+	background: none;
+	border: none;
+	color: #7ee787;
+	cursor: pointer;
+	font-size: 11px;
+	line-height: 1;
+	opacity: 0.7;
+}
+.cite-chip .cite-x:hover { opacity: 1; }
 .inputbar input {
 	flex: 1;
 	background: #0d1117;

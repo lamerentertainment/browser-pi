@@ -9,9 +9,31 @@ const props = defineProps<{ events: AgentEvent[]; busy: boolean }>();
 const scroller = ref<HTMLElement | null>(null);
 const expanded = ref(new Set<number>());
 
+// Klebt der Nutzer am unteren Rand, scrollen wir bei neuem Inhalt automatisch
+// nach. Hat er hochgescrollt (zum Nachlesen), reissen wir ihn nicht zurück.
+const STICK_THRESHOLD = 80;
+const stick = ref(true);
+
+function onScroll(): void {
+	const el = scroller.value;
+	if (!el) return;
+	const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+	stick.value = distance <= STICK_THRESHOLD;
+}
+
+// Reagiert nicht nur auf neue Events, sondern auch auf den wachsenden Text des
+// letzten Events — beim Streaming langer Antworten wird das letzte Event
+// koalesziert, die Array-Länge bleibt also gleich.
+function lastText(): string {
+	const last = props.events[props.events.length - 1];
+	if (!last) return "";
+	return "text" in last ? last.text : "output" in last ? last.output : "";
+}
+
 watch(
-	() => props.events.length,
+	() => [props.events.length, lastText(), props.busy] as const,
 	async () => {
+		if (!stick.value) return;
 		await nextTick();
 		if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight;
 	},
@@ -49,10 +71,12 @@ function renderMarkdown(text: string, streaming?: boolean): string {
 </script>
 
 <template>
-	<div ref="scroller" class="terminal">
+	<div ref="scroller" class="terminal" @scroll="onScroll">
 		<div v-for="(ev, i) in events" :key="i" class="line" :class="ev.type">
 			<template v-if="ev.type === 'user'">
-				<span class="prompt">›</span> <span class="user-text">{{ ev.text }}</span>
+				<span class="prompt">›</span>
+				<span v-if="ev.cite" class="cite-badge">📍 {{ ev.cite }}</span>
+				<span class="user-text">{{ ev.text }}</span>
 			</template>
 			<template v-else-if="ev.type === 'reasoning'">
 				<details class="reasoning" :open="ev.streaming">
@@ -108,6 +132,19 @@ function renderMarkdown(text: string, streaming?: boolean): string {
 	word-break: break-word;
 }
 .prompt { color: #7ee787; font-weight: bold; }
+/* Bezugsstelle als kompakter, kleingeschriebener Badge vor dem Nutzertext. */
+.cite-badge {
+	display: inline-block;
+	margin: 0 6px 2px 0;
+	padding: 1px 7px;
+	background: #1f2a1c;
+	border: 1px solid #2ea04366;
+	border-radius: 999px;
+	color: #7ee787;
+	font-size: 11px;
+	text-transform: lowercase;
+	vertical-align: middle;
+}
 .user-text { color: #e6edf3; }
 .assistant-markdown {
 	color: #c9d1d9;

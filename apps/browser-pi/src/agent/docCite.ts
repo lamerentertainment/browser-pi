@@ -16,7 +16,26 @@ export type CiteAnchor =
 	/** Dokument hat überhaupt keinen Text. */
 	| { kind: "empty" };
 
-/** Formuliert die vorbefüllte Chat-Eingabe; der Nutzer tippt seinen Auftrag dahinter. */
+/**
+ * Kompaktes, kleingeschriebenes Badge-Label für die Eingabezeile und das
+ * Terminal-Echo — die menschliche Kurzform der Bezugsstelle (der Agent bekommt
+ * stattdessen den vollen citePrompt-Text).
+ */
+export function citeBadge(a: CiteAnchor): string {
+	const clip = (s: string) => (s.length > 40 ? `${s.slice(0, 40)}…` : s);
+	switch (a.kind) {
+		case "text":
+			return `stelle: ${clip(a.text)}`;
+		case "after":
+			return `nach: ${clip(a.text)}`;
+		case "before":
+			return `vor: ${clip(a.text)}`;
+		case "empty":
+			return "dokumentanfang";
+	}
+}
+
+/** Voller Vorspann, der dem Agenten vorangestellt wird (er adressiert über den Wortlaut). */
 export function citePrompt(a: CiteAnchor): string {
 	switch (a.kind) {
 		case "text":

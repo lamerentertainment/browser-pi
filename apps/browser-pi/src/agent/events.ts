@@ -8,7 +8,7 @@
 // "eingefroren".
 
 export type AgentEvent =
-	| { type: "user"; text: string }
+	| { type: "user"; text: string; cite?: string }
 	| { type: "reasoning"; text: string; streaming?: boolean }
 	| { type: "assistant"; text: string; streaming?: boolean }
 	| { type: "tool_call"; id: string; name: string; args: Record<string, unknown> }
