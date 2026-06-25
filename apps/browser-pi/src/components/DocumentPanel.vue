@@ -7,6 +7,7 @@ import { onUnmounted, ref, watch } from "vue";
 import { deleteEntry, saveDocxBlob } from "../library/library.ts";
 import { basename, vfs } from "../vfs/vfs.ts";
 import { clearActiveWordDoc, setActiveWordDoc } from "../agent/wordBridge.ts";
+import type { CiteAnchor } from "../agent/docCite.ts";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import SuperDocEditor from "./SuperDocEditor.vue";
 
@@ -15,6 +16,9 @@ const emit = defineEmits<{
 	close: [];
 	saved: [path: string];
 	deleted: [];
+	// Reicht eine vom Nutzer per Rechtsklick markierte Stelle nach oben an
+	// App.vue, wo sie als Anker in die Chat-Eingabe wandert.
+	cite: [anchor: CiteAnchor];
 }>();
 
 const title = ref("");
@@ -76,7 +80,12 @@ async function confirmDelete() {
 		</div>
 
 		<div class="doc-body">
-			<SuperDocEditor v-if="docxBlob" ref="superdocRef" :blob="docxBlob" />
+			<SuperDocEditor
+				v-if="docxBlob"
+				ref="superdocRef"
+				:blob="docxBlob"
+				@cite="emit('cite', $event)"
+			/>
 			<p v-else class="no-blob">
 				Dokument-Bytes nicht verfügbar — bitte erneut hochladen.
 			</p>

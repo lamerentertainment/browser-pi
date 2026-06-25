@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, shallowRef, watch } from "vue";
+import { computed, nextTick, onMounted, ref, shallowRef, watch } from "vue";
 import type { AgentEvent } from "./agent/events.ts";
 import {
 	SLASH_COMMANDS,
@@ -12,6 +12,7 @@ import {
 import { loadLibrary, LIBRARIES } from "./library/library.ts";
 import { vfs } from "./vfs/vfs.ts";
 import { PiAgentSession } from "./agent/piSession.ts";
+import { type CiteAnchor, citePrompt } from "./agent/docCite.ts";
 import { settings } from "./store/settings.ts";
 import { requestPersistence } from "./vfs/idb.ts";
 import { seedIfNeeded } from "./vfs/seed.ts";
@@ -26,6 +27,7 @@ import { DOCX_MIME } from "./import/extract.ts";
 
 const events = ref<AgentEvent[]>([]);
 const input = ref("");
+const inputEl = ref<HTMLInputElement | null>(null);
 const busy = ref(false);
 const showSettings = ref(false);
 const explorer = ref<InstanceType<typeof LibrarySidebar> | null>(null);
@@ -348,6 +350,21 @@ function onDocClosed() {
 	explorer.value?.refresh();
 	loadPrompts();
 }
+
+// Der Nutzer hat im Word per Rechtsklick „Diese Stelle dem Agenten zeigen"
+// gewählt: wir legen die wörtliche Stelle als zitierten Anker in die Eingabe und
+// fokussieren sie, damit er nur noch seinen Auftrag dahinter tippen muss. Der
+// Agent erkennt die Stelle am wörtlichen Text (Grundlage der Word-Tools).
+function onDocCite(anchor: CiteAnchor) {
+	input.value = citePrompt(anchor);
+	paletteDismissed.value = true;
+	nextTick(() => {
+		const el = inputEl.value;
+		if (!el) return;
+		el.focus();
+		el.setSelectionRange(el.value.length, el.value.length);
+	});
+}
 </script>
 
 <template>
@@ -382,6 +399,7 @@ function onDocClosed() {
 					@close="onDocClosed"
 					@saved="explorer?.refresh()"
 					@deleted="onDocClosed"
+					@cite="onDocCite"
 				/>
 				<div
 					v-if="dockedDocPath"
@@ -404,6 +422,7 @@ function onDocClosed() {
 						/>
 						<span class="prompt">›</span>
 						<input
+							ref="inputEl"
 							v-model="input"
 							:disabled="busy"
 							placeholder="Aufgabe stellen – z.B. Fasse diesen Fall zusammen / für Befehle"
