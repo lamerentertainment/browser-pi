@@ -11,6 +11,8 @@ import type { ShellContext } from "../shell/shell.ts";
 import type { EventSink } from "./events.ts";
 import { createBrowserStreamFn } from "./piStream.ts";
 import { createPiTools } from "./piTools.ts";
+import { createWordTools } from "./wordTools.ts";
+import { getActiveWordDoc } from "./wordBridge.ts";
 import type { LlmConfig } from "./llm.ts";
 import { vfs } from "../vfs/vfs.ts";
 
@@ -31,6 +33,20 @@ Dokumente lesen — WICHTIG:
   lies die Datei einfach mit dem read-Tool (oder cat).
 - Liefert read leeren Text, enthielt das Dokument keinen extrahierbaren Text
   (z.B. ein eingescanntes Bild-PDF); sage das dann genau so.
+
+Word-Dokument live bearbeiten — Überarbeitungsmodus:
+- Ist ein Word-Dokument (.docx) im Editor geöffnet, kannst du es direkt LIVE
+  bearbeiten — mit den word_*-Tools: word_read (Inhalt als Markdown lesen),
+  word_find (Text suchen), word_replace (ersetzen), word_insert (einfügen),
+  word_delete (löschen).
+- WICHTIG: Jede deiner Änderungen erscheint automatisch als Überarbeitung
+  (Track Changes / Überarbeitungsmodus) — der Mensch sieht deine Vorschläge
+  sofort im Editor und nimmt sie an oder verwirft sie. Du musst nichts
+  speichern; bearbeite einfach direkt.
+- Lies vor Änderungen IMMER zuerst mit word_read den aktuellen Editor-Stand.
+  Adressiere Stellen über kurze, eindeutige wörtliche Textausschnitte.
+- Die word_*-Tools wirken NUR auf das gerade geöffnete Dokument, nicht auf das
+  VFS. Für andere Dateien nutze read/write/edit wie gewohnt.
 
 Sensible Inhalte verlassen den Browser nie.`;
 
@@ -57,7 +73,13 @@ async function buildSystemPrompt(): Promise<string> {
 			promptSection = `\n\nVerfügbare Prompt-Vorlagen im System:\n${promptLines.join("\n")}\nWenn eine dieser Vorlagen für die Aufgabe nützlich ist, kannst du sie mit dem read/grep Tool lesen, um ihre Anweisungen präzise zu berücksichtigen und anzuwenden.`;
 		}
 
-		return SYSTEM_PROMPT + promptSection;
+		// Hinweis auf das aktuell offene Word-Dokument (live bearbeitbar).
+		const activeWord = getActiveWordDoc();
+		const wordSection = activeWord
+			? `\n\nAKTUELL GEÖFFNET: Das Word-Dokument „${activeWord.title}" (${activeWord.path}) ist im Editor offen und LIVE bearbeitbar. Verwende die word_*-Tools; deine Änderungen erscheinen automatisch als Überarbeitung (Track Changes).`
+			: "";
+
+		return SYSTEM_PROMPT + promptSection + wordSection;
 	} catch (err) {
 		return SYSTEM_PROMPT;
 	}
@@ -111,7 +133,9 @@ export class PiAgentSession {
 			initialState: {
 				systemPrompt: SYSTEM_PROMPT,
 				model: buildModel(config),
-				tools: createPiTools(this.ctx),
+				// VFS-Tools + Live-Word-Tools. Letztere wirken auf das gerade im
+				// Editor geöffnete .docx und schreiben als Tracked Changes.
+				tools: [...createPiTools(this.ctx), ...createWordTools()],
 			},
 			// Eigene, browser-sichere streamFn statt pi-ai's Provider-Registry.
 			streamFn: createBrowserStreamFn(() => this.config.apiKey),

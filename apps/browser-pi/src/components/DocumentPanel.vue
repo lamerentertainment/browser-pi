@@ -3,9 +3,10 @@
 // Modal-Overlay aufzugehen). Der Nutzer sieht das Word-Dokument neben den
 // Agenten-Antworten und kann beides gleichzeitig im Blick behalten. Speichern
 // hält das Panel offen (IDE-artig); Löschen oder Schliessen entfernt es.
-import { ref, watch } from "vue";
+import { onUnmounted, ref, watch } from "vue";
 import { deleteEntry, saveDocxBlob } from "../library/library.ts";
 import { basename, vfs } from "../vfs/vfs.ts";
+import { clearActiveWordDoc, setActiveWordDoc } from "../agent/wordBridge.ts";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import SuperDocEditor from "./SuperDocEditor.vue";
 
@@ -22,17 +23,32 @@ const confirmingDelete = ref(false);
 const docxBlob = ref<Blob | undefined>(undefined);
 const superdocRef = ref<InstanceType<typeof SuperDocEditor> | null>(null);
 
-// Beim Öffnen (und bei Pfadwechsel) das Dokument-Blob laden.
+// Beim Öffnen (und bei Pfadwechsel) das Dokument-Blob laden und das Dokument als
+// „live durch den Agenten bearbeitbar" in der Word-Bridge registrieren. Der
+// Agent adressiert über die DocumentApi des gemounteten SuperDoc-Editors und
+// setzt Änderungen als Tracked Changes (Überarbeitungsmodus).
 watch(
 	() => props.path,
-	async (path) => {
+	async (path, prev) => {
+		if (prev) clearActiveWordDoc(prev);
 		docxBlob.value = undefined;
 		const rec = await vfs.getRecord(path);
 		title.value = basename(path);
 		docxBlob.value = rec?.blob;
+		setActiveWordDoc({
+			path,
+			title: title.value,
+			doc: () => {
+				if (!superdocRef.value) throw new Error("Editor nicht bereit");
+				return superdocRef.value.getDocumentApi();
+			},
+		});
 	},
 	{ immediate: true },
 );
+
+// Beim Schliessen des Panels die Registrierung sauber aufheben.
+onUnmounted(() => clearActiveWordDoc(props.path));
 
 async function save() {
 	if (busy.value || !superdocRef.value) return;

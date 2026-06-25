@@ -4,7 +4,7 @@
 // SuperDoc montiert eine eigene Vue-Instanz in containerRef — sie ist von der
 // browser-pi-App-Instanz isoliert.
 import { onMounted, onUnmounted, ref } from "vue";
-import { SuperDoc } from "@harbour-enterprises/superdoc";
+import { SuperDoc, type DocumentApi } from "@harbour-enterprises/superdoc";
 import "@harbour-enterprises/superdoc/style.css";
 
 const props = defineProps<{ blob: Blob }>();
@@ -25,6 +25,9 @@ onMounted(() => {
 		toolbar: `#${toolbarId}`,
 		document: file,
 		documentMode: "editing",
+		// Autor für Tracked Changes: die Agentenvorschläge erscheinen unter diesem
+		// Namen im Überarbeitungsmodus (der Mensch bleibt der "Editor").
+		user: { name: "KI-Assistent (pi)", email: "agent@browser-pi.local" },
 	});
 });
 
@@ -45,7 +48,18 @@ async function getBlob(): Promise<Blob> {
 	return blob;
 }
 
-defineExpose({ getBlob });
+/**
+ * Liefert die agentenfreundliche DocumentApi des LIVE-Editors. Die Word-Tools
+ * (wordTools.ts) bearbeiten darüber das offene Dokument mit Tracked Changes.
+ * Wirft, solange der Editor noch nicht bereit ist.
+ */
+function getDocumentApi(): DocumentApi {
+	const editor = instance?.activeEditor;
+	if (!editor) throw new Error("Word-Editor noch nicht bereit");
+	return editor.doc;
+}
+
+defineExpose({ getBlob, getDocumentApi });
 </script>
 
 <template>
