@@ -26,6 +26,11 @@ const busy = ref(false);
 const confirmingDelete = ref(false);
 const docxBlob = ref<Blob | undefined>(undefined);
 const superdocRef = ref<InstanceType<typeof SuperDocEditor> | null>(null);
+// Speicher-Feedback: das Panel bleibt nach dem Speichern offen (IDE-artig), der
+// Dateiname ändert sich nicht — ohne sichtbares Signal wirkt der Button kaputt.
+// "saved" blendet kurz eine Bestätigung ein, "error" zeigt einen Fehlerhinweis.
+const status = ref<"idle" | "saved" | "error">("idle");
+let statusTimer: ReturnType<typeof setTimeout> | undefined;
 
 // Beim Öffnen (und bei Pfadwechsel) das Dokument-Blob laden und das Dokument als
 // „live durch den Agenten bearbeitbar" in der Word-Bridge registrieren. Der
@@ -52,7 +57,18 @@ watch(
 );
 
 // Beim Schliessen des Panels die Registrierung sauber aufheben.
-onUnmounted(() => clearActiveWordDoc(props.path));
+onUnmounted(() => {
+	clearActiveWordDoc(props.path);
+	if (statusTimer) clearTimeout(statusTimer);
+});
+
+function flashStatus(next: "saved" | "error") {
+	status.value = next;
+	if (statusTimer) clearTimeout(statusTimer);
+	statusTimer = setTimeout(() => {
+		status.value = "idle";
+	}, 2500);
+}
 
 async function save() {
 	if (busy.value || !superdocRef.value) return;
@@ -61,6 +77,10 @@ async function save() {
 		const blob = await superdocRef.value.getBlob();
 		await saveDocxBlob(props.path, blob);
 		emit("saved", props.path);
+		flashStatus("saved");
+	} catch (err) {
+		console.error("DOCX-Speichern fehlgeschlagen:", err);
+		flashStatus("error");
 	} finally {
 		busy.value = false;
 	}
@@ -96,8 +116,12 @@ async function confirmDelete() {
 				Löschen
 			</button>
 			<span class="spacer"></span>
+			<span v-if="status === 'saved'" class="status ok">Gespeichert ✓</span>
+			<span v-else-if="status === 'error'" class="status err">
+				Speichern fehlgeschlagen
+			</span>
 			<button class="btn primary" :disabled="busy || !docxBlob" @click="save">
-				Speichern
+				{{ busy ? "Speichert …" : "Speichern" }}
 			</button>
 		</div>
 
@@ -168,6 +192,12 @@ async function confirmDelete() {
 	flex-shrink: 0;
 }
 .spacer { flex: 1; }
+.status {
+	font-size: 12px;
+	white-space: nowrap;
+}
+.status.ok { color: #3fb950; }
+.status.err { color: #f85149; }
 .btn {
 	padding: 7px 14px;
 	border-radius: 6px;
